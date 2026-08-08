@@ -72,6 +72,43 @@ class TestCorruptions:
         findings = run_all(healthy, QUANTILE_CONFIG)
         assert "error" not in severities(findings, "DS006")
 
+    def test_ds004_missing_shard(self, tmp_path):
+        findings = run_all(build(tmp_path / "d", break_rule="DS004"), MEANSTD_CONFIG)
+        assert "error" in severities(findings, "DS004")
+        msg = next(f for f in findings if f.rule_id == "DS004" and f.severity == "error").message
+        assert "not on disk" in msg
+
+    def test_ds007_non_monotonic_timestamps(self, tmp_path):
+        findings = run_all(build(tmp_path / "d", break_rule="DS007"), MEANSTD_CONFIG)
+        assert "error" in severities(findings, "DS007")
+
+    def test_ds009_constant_dimension(self, tmp_path):
+        findings = run_all(build(tmp_path / "d", break_rule="DS009"), MEANSTD_CONFIG)
+        assert "warning" in severities(findings, "DS009")
+        msg = next(f for f in findings if f.rule_id == "DS009").message
+        assert "never change" in msg
+
+    def test_ds010_clipped_actions(self, tmp_path):
+        findings = run_all(build(tmp_path / "d", break_rule="DS010"), MEANSTD_CONFIG)
+        assert "warning" in severities(findings, "DS010")
+
+    def test_ds010_ignores_a_binary_gripper(self, tmp_path):
+        """A gripper is legitimately always open or closed; that is not clipping."""
+        import numpy as np
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+
+        root = build(tmp_path / "d")
+        f = root / "data" / "chunk-000" / "file-000.parquet"
+        table = pq.read_table(f)
+        actions = np.asarray(table["action"].to_pylist(), dtype=float)
+        gripper = np.where(np.arange(len(actions)) % 2 == 0, 0.0, 1.0)
+        merged = [[a[0], g] for a, g in zip(actions, gripper, strict=True)]
+        pq.write_table(table.drop(["action"]).append_column(
+            "action", pa.array(merged)), f)
+        findings = run_all(root, MEANSTD_CONFIG)
+        assert "warning" not in severities(findings, "DS010")
+
     def test_ds008_detects_a_shifted_action_stream(self, tmp_path):
         findings = run_all(build(tmp_path / "d", break_rule="DS008"), MEANSTD_CONFIG)
         assert "warning" in severities(findings, "DS008")

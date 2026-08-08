@@ -13,7 +13,7 @@ support.
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
 [![Live demo](https://img.shields.io/badge/live_demo-verdikt-58A6FF)](https://relaxed-heliotrope-271cc3.netlify.app)
-[![Tests](https://img.shields.io/badge/tests-141_passing-3FB950)](tests/)
+[![Tests](https://img.shields.io/badge/tests-156_passing-3FB950)](tests/)
 [![codecov](https://codecov.io/gh/muhammadmahadazher/Verdikt/branch/main/graph/badge.svg)](https://codecov.io/gh/muhammadmahadazher/Verdikt)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
@@ -48,7 +48,7 @@ verdikt compare results/*.json --baseline diffusion_50k
 | Command | Question it answers | Exit |
 |---|---|---|
 | `verdikt doctor` | Is my training stack about to fail *silently*? | 0 / 2 |
-| `verdikt lint` | Is this dataset going to waste my GPU-hours? | 0 / 2 |
+| `verdikt lint` | Is this dataset going to waste my GPU-hours? (10 rules) | 0 / 2 |
 | `verdikt ingest` | Turn any harness's eval output into one canonical table | 0 |
 | `verdikt plan` | How many episodes do I actually need? | 0 |
 | `verdikt manifest` / `diff` | Are these two runs even comparable? | 0 / 3 |
@@ -431,7 +431,7 @@ Scope discipline is a feature. Verdikt will never:
 | Status | Feature |
 |:---:|---|
 | ✅ | `ingest` · `plan` · `compare` · `doctor` · `manifest` / `diff` |
-| ✅ | `lint` — six dataset rules, each with a deliberately-corrupted test fixture |
+| ✅ | `lint` — ten dataset rules, each with a deliberately-corrupted test fixture |
 | ✅ | `report` — self-contained HTML + LeRobot-format model card |
 | ✅ | `watch` — anytime-valid sequential stopping, past its 20,000-run false-positive gate |
 | ✅ | `gate` — GitHub Action wrapping the four-state exit code, dogfooded in CI |

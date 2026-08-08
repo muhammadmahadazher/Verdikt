@@ -200,6 +200,196 @@ def ds003_episode_index(view: DatasetView) -> list[Finding]:
                                    f"{view.episodes.num_rows} episodes")]
 
 
+# ------------------------------------------------------------------ DS004
+def ds004_shards(view: DatasetView) -> list[Finding]:
+    """Every shard an episode points at must exist, and every shard must be pointed at.
+
+    A dangling reference fails at dataloading time - usually thousands of steps in, after the
+    dataloader has been shuffling happily through the shards that do exist. An orphaned shard
+    is quieter and worse: the frames are on disk, nothing errors, and they are silently never
+    trained on.
+    """
+    if view.episodes is None or not view.data_files:
+        return [Finding(rule_id="DS004", severity="info",
+                        message="no episodes metadata or data files; skipped")]
+    cols = view.episodes.column_names
+    if "data/chunk_index" not in cols or "data/file_index" not in cols:
+        return [Finding(rule_id="DS004", severity="info",
+                        message="episodes metadata carries no shard pointers; skipped")]
+
+    referenced = {(int(c), int(f)) for c, f in zip(
+        np.asarray(view.episodes["data/chunk_index"]),
+        np.asarray(view.episodes["data/file_index"]), strict=True)}
+    on_disk = {}
+    for path in view.data_files:
+        try:
+            chunk = int(path.parent.name.split("-")[-1])
+            file_idx = int(path.stem.split("-")[-1])
+        except (ValueError, IndexError):
+            continue
+        on_disk[(chunk, file_idx)] = path
+
+    out: list[Finding] = []
+    missing = sorted(referenced - set(on_disk))
+    if missing:
+        out.append(Finding(
+            rule_id="DS004", severity="error",
+            message=f"{len(missing)} referenced shard(s) are not on disk",
+            detail=f"first missing: chunk-{missing[0][0]:03d}/file-{missing[0][1]:03d}. "
+                   "training will fail partway through an epoch, once the loader reaches it.",
+            fix="restore the missing files or re-export the dataset",
+            location="data/"))
+
+    orphans = sorted(set(on_disk) - referenced)
+    if orphans:
+        out.append(Finding(
+            rule_id="DS004", severity="warning",
+            message=f"{len(orphans)} shard(s) on disk are referenced by no episode",
+            detail=f"first orphan: {on_disk[orphans[0]].name}. these frames occupy disk and "
+                   "are silently never trained on.",
+            fix="regenerate meta/episodes, or delete the orphaned shards",
+            location="data/"))
+    return out or [Finding(rule_id="DS004", severity="info",
+                           message=f"all {len(referenced)} referenced shard(s) present, "
+                                   "none orphaned")]
+
+
+# ------------------------------------------------------------------ DS007
+def ds007_timestamps(view: DatasetView) -> list[Finding]:
+    """Timestamps must rise within an episode and match the declared frame rate.
+
+    LeRobot enforces a timestamp tolerance at load time; a dataset that drifts against its own
+    declared fps raises there rather than here, after you have already waited for the loader.
+    Non-monotonic timestamps usually mean frames were concatenated in the wrong order.
+    """
+    if not view.data_files:
+        return [Finding(rule_id="DS007", severity="info", message="no data files; skipped")]
+    table = _read_columns(view, ["timestamp", "episode_index"])
+    if table is None:
+        return [Finding(rule_id="DS007", severity="info",
+                        message="no timestamp column; skipped")]
+
+    ts = np.asarray(table["timestamp"], dtype=float)
+    ep = np.asarray(table["episode_index"])
+    within = ep[1:] == ep[:-1]
+    deltas = np.diff(ts)[within]
+    if deltas.size == 0:
+        return [Finding(rule_id="DS007", severity="info", message="too few frames; skipped")]
+
+    out: list[Finding] = []
+    n_backwards = int(np.count_nonzero(deltas <= 0))
+    if n_backwards:
+        out.append(Finding(
+            rule_id="DS007", severity="error",
+            message=f"timestamps do not increase at {n_backwards} transition(s)",
+            detail="frames are out of order within an episode, or duplicated.",
+            fix="re-sort frames by timestamp within each episode before exporting",
+            location="data/"))
+
+    fps = view.info.get("fps")
+    if fps:
+        expected = 1.0 / float(fps)
+        median = float(np.median(deltas))
+        if abs(median - expected) / expected > 0.05:
+            out.append(Finding(
+                rule_id="DS007", severity="error",
+                message=f"frame spacing implies {1 / median:.2f} fps, but info.json says {fps}",
+                detail=f"median gap {median:.4f}s vs {expected:.4f}s expected. every "
+                       "time-derived quantity - velocities, action chunk durations - is "
+                       "wrong by this factor.",
+                fix=f'set "fps": {round(1 / median)} in meta/info.json, or re-export at {fps} fps',
+                location="meta/info.json"))
+        else:
+            jitter = float(np.percentile(np.abs(deltas - expected) / expected, 99))
+            if jitter > 0.25:
+                out.append(Finding(
+                    rule_id="DS007", severity="warning",
+                    message=f"frame spacing is uneven (99th percentile jitter {jitter:.0%})",
+                    detail="dropped frames or a variable-rate recorder; time-derived features "
+                           "will be noisy.",
+                    location="data/"))
+    return out or [Finding(rule_id="DS007", severity="info",
+                           message=f"timestamps monotonic and consistent with {fps} fps")]
+
+
+# ------------------------------------------------------------------ DS009
+def ds009_dead_dimensions(view: DatasetView) -> list[Finding]:
+    """Action or state dimensions that never change.
+
+    A joint that is constant across the whole dataset is either a broken sensor, a gripper
+    that was never actuated, or a dimension that does not belong in the action space. The
+    policy will happily learn to predict the constant, and the dimension contributes nothing
+    while still consuming capacity and normalisation statistics.
+    """
+    out: list[Finding] = []
+    for feature in ("action", "observation.state"):
+        table = _read_columns(view, [feature])
+        if table is None:
+            continue
+        values = _to_matrix(table[feature])
+        if values is None or values.shape[0] < 2:
+            continue
+        spread = values.std(axis=0)
+        scale = np.abs(values).mean(axis=0) + 1e-12
+        dead = np.flatnonzero(spread / scale < 1e-6)
+        if dead.size:
+            out.append(Finding(
+                rule_id="DS009", severity="warning",
+                message=f"{feature}: dimension(s) {dead.tolist()} never change",
+                detail=f"constant across all {values.shape[0]} frames "
+                       f"(values {np.round(values[0, dead], 4).tolist()}). a broken sensor, an "
+                       "unused gripper, or a dimension that does not belong in this space.",
+                fix="drop the dimension, or confirm the recording captured it correctly",
+                location="data/"))
+    return out or [Finding(rule_id="DS009", severity="info",
+                           message="no constant action or state dimensions")]
+
+
+# ------------------------------------------------------------------ DS010
+def ds010_saturation(view: DatasetView) -> list[Finding]:
+    """Actions pinned at their own extremes - the signature of a clipped action space.
+
+    When a large fraction of commands sit exactly at the recorded minimum or maximum, the
+    demonstrator was asking for more than the action space allowed. The policy then learns a
+    censored distribution and cannot express the behaviour that was actually intended.
+    """
+    table = _read_columns(view, ["action"])
+    if table is None:
+        return [Finding(rule_id="DS010", severity="info", message="no action column; skipped")]
+    actions = _to_matrix(table["action"])
+    if actions is None or actions.shape[0] < 50:
+        return [Finding(rule_id="DS010", severity="info", message="too few frames; skipped")]
+
+    lo, hi = actions.min(axis=0), actions.max(axis=0)
+    span = hi - lo
+    live = span > 1e-12
+    if not live.any():
+        return [Finding(rule_id="DS010", severity="info",
+                        message="all action dimensions are constant; see DS009")]
+
+    tol = 1e-6 * np.maximum(span, 1e-12)
+    at_edge = ((np.abs(actions - lo) <= tol) | (np.abs(actions - hi) <= tol))
+    frac = at_edge.mean(axis=0)
+    # A binary or discrete dimension is legitimately always "at an extreme" - a gripper is
+    # open or closed - so only flag dimensions that take many distinct values in between.
+    distinct = np.array([len(np.unique(actions[:, j])) for j in range(actions.shape[1])])
+    suspicious = np.flatnonzero(live & (frac > 0.25) & (distinct > 10))
+    if suspicious.size:
+        worst = int(suspicious[np.argmax(frac[suspicious])])
+        return [Finding(
+            rule_id="DS010", severity="warning",
+            message=f"action dimension(s) {suspicious.tolist()} sit at their limits in "
+                    f"{frac[suspicious].max():.0%} of frames",
+            detail=f"dimension {worst} is pinned at {lo[worst]:.4g} or {hi[worst]:.4g} in "
+                   f"{frac[worst]:.0%} of frames while taking {distinct[worst]} distinct "
+                   "values overall - the demonstrator was asking for more range than the "
+                   "action space allowed, so the recorded distribution is censored.",
+            fix="widen the action limits and re-record, or confirm the clipping is intended",
+            location="data/")]
+    return [Finding(rule_id="DS010", severity="info",
+                    message="no action dimension shows clipping")]
+
+
 # ------------------------------------------------------------------ DS005
 def ds005_stats(view: DatasetView, features: list[str] | None = None) -> list[Finding]:
     """Recompute normalisation statistics from the data and diff against what is stored.
@@ -451,9 +641,13 @@ RULES = {
     "DS001": ds001_fps,
     "DS002": ds002_version,
     "DS003": ds003_episode_index,
+    "DS004": ds004_shards,
     "DS005": ds005_stats,
     "DS006": ds006_normalization,
+    "DS007": ds007_timestamps,
     "DS008": ds008_alignment,
+    "DS009": ds009_dead_dimensions,
+    "DS010": ds010_saturation,
 }
 
 
@@ -508,6 +702,28 @@ def _parquet_rows(view: DatasetView) -> int | None:
         return total
     except Exception:
         return None
+
+
+def _read_columns(view: DatasetView, columns: list[str]):
+    """Read the requested columns across every data shard, or None if any is absent.
+
+    Reads all shards rather than the first: a fault confined to shard three is exactly the
+    kind that survives a spot check and then costs a training run.
+    """
+    import pyarrow as pa
+
+    parts = []
+    for path in view.data_files:
+        try:
+            with pq.ParquetFile(path) as pf:
+                if not set(columns) <= set(pf.schema_arrow.names):
+                    return None
+            parts.append(pq.read_table(path, columns=columns))
+        except Exception:
+            return None
+    if not parts:
+        return None
+    return parts[0] if len(parts) == 1 else pa.concat_tables(parts)
 
 
 def _stat_keys(view: DatasetView) -> set[str]:

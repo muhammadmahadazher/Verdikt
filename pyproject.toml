@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 # unrelated placeholder. The import package and the console command are both still `verdikt`:
 #     pip install verdikt-eval   ->   import verdikt ;  $ verdikt compare ...
 name = "verdikt-eval"
-version = "0.1.0"
+version = "0.2.0"
 description = "A CPU-only decision layer for robot-policy evaluation: reads the eval JSON you already have and refuses to let you draw a conclusion the data does not support."
 readme = "README.md"
 requires-python = ">=3.10"

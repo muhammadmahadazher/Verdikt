@@ -4,7 +4,7 @@ Reads the eval JSON, dataset files and run configs you already have, and refuses
 draw a conclusion the data does not support.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .schema import ArmSummary, ComparisonResult, Plan, Rollout, RunManifest, Verdict
 

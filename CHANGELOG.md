@@ -4,6 +4,31 @@ All notable changes to Verdikt are recorded here. Versions follow
 [semantic versioning](https://semver.org/); the statistical behaviour of a command is treated
 as part of its public API, so a change that would alter a verdict is a breaking change.
 
+## [0.2.0] — 2026-08-08
+
+Four new dataset rules, bringing `lint` to ten. Each ships with a deliberately-corrupted
+fixture, and all ten stay silent on the real 206-episode `lerobot/pusht` dataset.
+
+### Added
+
+- **DS004 — shard integrity.** Every shard an episode points at must exist, and every shard
+  must be pointed at. A dangling reference fails partway through an epoch, once the loader
+  reaches it; an orphaned shard is quieter and worse — the frames sit on disk and are
+  silently never trained on.
+- **DS007 — timestamp monotonicity and frame rate.** Catches frames concatenated out of
+  order, and datasets whose real spacing disagrees with the declared `fps` (which silently
+  scales every velocity and action-chunk duration).
+- **DS009 — dead dimensions.** An action or state dimension that never changes: a broken
+  sensor, a gripper that was never actuated, or a dimension that does not belong in the space.
+- **DS010 — action saturation.** Commands pinned at their own recorded extremes, the
+  signature of a clipped action space. Skips dimensions with few distinct values, because a
+  binary gripper is legitimately always at an extreme and flagging it would be a false alarm.
+
+### Changed
+
+- Rules that read frame data now read **every shard**, not the first. A fault confined to
+  shard three is exactly the kind that survives a spot check and then costs a training run.
+
 ## [0.1.0] — 2026-08-08
 
 Published to PyPI as `verdikt-eval`: `pip install verdikt-eval`.

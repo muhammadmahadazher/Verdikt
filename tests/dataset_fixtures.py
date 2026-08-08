@@ -75,13 +75,22 @@ def build(root: Path, *, break_rule: str | None = None) -> Path:
     state, action, episode_index, frame_index = _trajectories(action_lag=lag)
     total_frames = int(state.shape[0])
 
+    if break_rule == "DS009":
+        action[:, 1] = 42.0                      # a joint that never moves
+    if break_rule == "DS010":
+        action = np.clip(action, 120.0, 380.0)   # demonstrator asked for more range than allowed
+
+    timestamps = (frame_index / FPS).astype("float64")
+    if break_rule == "DS007":
+        timestamps[5], timestamps[6] = timestamps[6], timestamps[5]  # frames out of order
+
     pq.write_table(
         pa.table({
             "observation.state": [row.tolist() for row in state],
             "action": [row.tolist() for row in action],
             "episode_index": episode_index.astype("int64"),
             "frame_index": frame_index.astype("int64"),
-            "timestamp": (frame_index / FPS).astype("float64"),
+            "timestamp": timestamps,
             "index": np.arange(total_frames, dtype="int64"),
         }),
         root / "data" / "chunk-000" / "file-000.parquet",
@@ -91,12 +100,17 @@ def build(root: Path, *, break_rule: str | None = None) -> Path:
     ends = starts + FRAMES_PER_EPISODE
     if break_rule == "DS003":
         ends[2] -= 7  # leave a hole: ranges no longer tile the frame axis
+    file_index = np.zeros(N_EPISODES, dtype="int64")
+    if break_rule == "DS004":
+        file_index[3] = 7  # point an episode at chunk-000/file-007, which does not exist
     pq.write_table(
         pa.table({
             "episode_index": np.arange(N_EPISODES, dtype="int64"),
             "dataset_from_index": starts.astype("int64"),
             "dataset_to_index": ends.astype("int64"),
             "length": (ends - starts).astype("int64"),
+            "data/chunk_index": np.zeros(N_EPISODES, dtype="int64"),
+            "data/file_index": file_index,
         }),
         root / "meta" / "episodes" / "chunk-000" / "file-000.parquet",
     )
