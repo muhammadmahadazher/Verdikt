@@ -4,7 +4,9 @@ All notable changes to Verdikt are recorded here. Versions follow
 [semantic versioning](https://semver.org/); the statistical behaviour of a command is treated
 as part of its public API, so a change that would alter a verdict is a breaking change.
 
-## [0.1.0] — unreleased
+## [0.1.0] — 2026-08-08
+
+Published to PyPI as `verdikt-eval`: `pip install verdikt-eval`.
 
 First release. Nine commands, all reading files that already exist on disk.
 

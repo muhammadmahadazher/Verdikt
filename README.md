@@ -8,7 +8,7 @@ A CPU-only decision layer for robot-policy evaluation. It reads the eval JSON, d
 and run configs you already have — and refuses to let you draw a conclusion the data does not
 support.
 
-[![PyPI](https://img.shields.io/badge/pip-verdikt-3775A9?logo=pypi&logoColor=white)](https://github.com/muhammadmahadazher/Verdikt)
+[![PyPI](https://img.shields.io/pypi/v/verdikt-eval?logo=pypi&logoColor=white&label=verdikt-eval)](https://pypi.org/project/verdikt-eval/)
 [![Python](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
@@ -75,39 +75,18 @@ is a first-class answer instead of a silent pass:
 
 > **Requirements:** Python 3.10+. No GPU. No robot. No simulator. Nothing to configure.
 
-<details open>
-<summary><b>🪟 Windows (PowerShell)</b></summary>
-
-```powershell
-python -m venv .venv; .venv\Scripts\activate
-pip install git+https://github.com/muhammadmahadazher/Verdikt
-```
-</details>
-
-<details>
-<summary><b>🐧 Linux</b></summary>
-
 ```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install git+https://github.com/muhammadmahadazher/Verdikt
+pip install verdikt-eval
 ```
-</details>
 
-<details>
-<summary><b>🍎 macOS</b></summary>
+That is the whole install, on Windows, Linux and macOS alike — Verdikt is pure CPU Python, so
+Apple Silicon and Intel both just work. Prefer an isolated tool install? `pipx install
+verdikt-eval` or `uv tool install verdikt-eval`.
 
-```bash
-python3 -m venv .venv && source .venv/bin/activate
-pip install git+https://github.com/muhammadmahadazher/Verdikt
-```
-*Identical on macOS — Verdikt is pure CPU Python, so Apple Silicon and Intel both just work.*
-</details>
-
-> **On the name:** once released, the PyPI distribution will be **`verdikt-eval`** — plain
-> `verdikt` is held by an unrelated placeholder package. The import package and the command
-> are unaffected: `pip install verdikt-eval` gives you `import verdikt` and `$ verdikt`,
-> the same way `python-dateutil` gives you `import dateutil`. Until then, install from git
-> as shown above.
+> **On the name:** the distribution is **`verdikt-eval`** because plain `verdikt` is held on
+> PyPI by an unrelated placeholder. The import package and the command are unaffected —
+> `pip install verdikt-eval` gives you `import verdikt` and `$ verdikt`, the same split
+> `python-dateutil` uses.
 
 **Optional extras:** `pip install "verdikt-eval[hub,gpu,wandb]"` — HuggingFace dataset resolution,
 NVIDIA device detection for `doctor`, and Weights & Biases write-back.
