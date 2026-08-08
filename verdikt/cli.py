@@ -496,6 +496,94 @@ def diff(manifest_a, manifest_b):
     raise SystemExit(3)
 
 
+# ------------------------------------------------------------------- watch
+@main.command()
+@click.argument("paths", nargs=-1, required=True)
+@click.option("--adapter", type=click.Choice(available()), default=None)
+@click.option("--alpha", type=float, default=0.05, show_default=True)
+@click.option("--partial", is_flag=True,
+              help="wager on partial credit (progress/coverage) instead of binary success")
+@click.option("--replay", is_flag=True,
+              help="replay the recorded episodes in many random orders and report the "
+                   "measured saving instead of a single run")
+@click.option("--trials", type=int, default=2000, show_default=True)
+def watch(paths, adapter, alpha, partial, replay, trials):
+    """Stop an evaluation the moment the answer is in - valid no matter how often you look.
+
+    A fixed-sample test is only valid at the n you committed to; peeking until p drops below
+    0.05 inflates false positives badly. This uses a test martingale instead, so Ville's
+    inequality bounds the error at alpha across every possible stopping time.
+    """
+    from .sequential import replay_savings, run
+
+    rollouts = _load(paths, adapter, None)
+    by_policy: dict[str, list] = {}
+    for r in sorted(rollouts, key=lambda r: r.episode_idx):
+        by_policy.setdefault(r.policy_id, []).append(r)
+    if len(by_policy) != 2:
+        raise click.ClickException(
+            f"watch compares exactly two arms; found {len(by_policy)}: {sorted(by_policy)}")
+
+    (name_a, rs_a), (name_b, rs_b) = sorted(by_policy.items())
+
+    def outcomes(rs):
+        vals = []
+        for r in rs:
+            v = r.progress if partial else (1.0 if r.success else 0.0)
+            if v is None:
+                continue
+            vals.append(float(v))
+        return vals
+
+    a, b = outcomes(rs_a), outcomes(rs_b)
+    if not a or not b:
+        raise click.ClickException(
+            "no usable outcomes: --partial needs a progress column, and the default needs "
+            "success labels")
+
+    signal = "partial credit (progress)" if partial else "binary success"
+    console.print()
+    console.print(f"[bold]sequential test[/]  {name_a} vs {name_b}")
+    console.print(f"[dim]signal: {signal} · alpha={alpha} · capital threshold "
+                  f"{1 / alpha:.0f}x[/]")
+    if partial:
+        console.print("[yellow]note[/] partial credit answers a different question than "
+                      "success:\n      two policies can differ in coverage while their "
+                      "success rates do not.")
+
+    if replay:
+        res = replay_savings(a, b, alpha=alpha, trials=trials)
+        console.print(f"\n[bold]replayed {res['trials']} random orderings of "
+                      f"{res['n_available']} episodes[/]")
+        console.print(f"  reached a verdict in   [bold]{res['stop_rate']:.0%}[/] of orderings")
+        if res["stop_rate"] > 0:
+            console.print(f"  median stopping point  [bold cyan]{res['median_stop']}[/] episodes "
+                          f"(90th percentile {res['p90_stop']})")
+            console.print(f"  median saving          [bold green]"
+                          f"{res['median_saving']:.0%}[/] of the episodes you ran")
+        else:
+            console.print("  [dim]never crossed the threshold: at this effect size the "
+                          "sequential test correctly declines to reject.[/]")
+        raise SystemExit(0)
+
+    state = run(a, b, alpha=alpha)
+    console.print()
+    if state.stopped_at:
+        saving = 1 - state.stopped_at / min(len(a), len(b))
+        console.print(f"[green]STOP[/]  a verdict was available after "
+                      f"[bold]{state.stopped_at}[/] episodes per arm")
+        console.print(f"      {state.evidence}")
+        console.print(f"      [dim]you ran {min(len(a), len(b))}; "
+                      f"{saving:.0%} of them were not needed[/]")
+        raise SystemExit(0)
+
+    console.print(f"[yellow]CONTINUE[/]  no verdict after {state.steps} episodes per arm")
+    console.print(f"          {state.evidence}")
+    console.print(f"          [dim]peak capital reached {state.peak:.2f}x. this is not "
+                  "evidence of equivalence - it is an absence of evidence either way.[/]")
+    raise SystemExit(2)
+
+
 # ------------------------------------------------------------------ report
 @main.command()
 @click.argument("paths", nargs=-1, required=True)

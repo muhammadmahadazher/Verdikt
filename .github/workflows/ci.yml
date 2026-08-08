@@ -24,7 +24,13 @@ jobs:
       - name: lint
         run: ruff check verdikt tests
       - name: test
-        run: pytest -q
+        run: pytest -q --cov=verdikt --cov-report=xml
+      - name: upload coverage
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        uses: codecov/codecov-action@v4
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
       - name: smoke test the CLI on the committed fixture
         shell: bash
         run: |

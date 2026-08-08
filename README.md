@@ -12,7 +12,8 @@ support.
 [![Python](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-97_passing-3FB950)](tests/)
+[![Tests](https://img.shields.io/badge/tests-114_passing-3FB950)](tests/)
+[![codecov](https://codecov.io/gh/muhammadmahadazher/Verdikt/branch/main/graph/badge.svg)](https://codecov.io/gh/muhammadmahadazher/Verdikt)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
 <img src="docs/workflow.png" width="96%" alt="Verdikt architecture: every command reads a file that already exists"/>
@@ -51,6 +52,8 @@ verdikt compare results/*.json --baseline diffusion_50k
 | `verdikt plan` | How many episodes do I actually need? | 0 |
 | `verdikt manifest` / `diff` | Are these two runs even comparable? | 0 / 3 |
 | `verdikt compare` | Is checkpoint B **really** better than A? | 0 / 1 / 2 / 3 |
+| `verdikt watch` | Can I **stop this eval early**? | 0 / 2 |
+| `verdikt report` | Give me something to hand my lead | 0 / 1 / 2 / 3 |
 
 ### The four-state verdict
 
@@ -169,6 +172,44 @@ And the number nobody wants to hear:
 At n=20, power to detect 35%-vs-70% is **0.468** — worse than a coin flip.
 
 ---
+
+## Stop the eval as soon as the answer is in
+
+Every other command here takes claims away. This one gives GPU-hours back.
+
+```bash
+verdikt watch runs/act/eval_info.json runs/upstream/eval_info.json --replay
+```
+```
+replayed 800 random orderings of 200 episodes
+  reached a verdict in   100% of orderings
+  median stopping point  14 episodes (90th percentile 17)
+  median saving          93% of the episodes you ran
+```
+
+Peeking at a p-value as episodes arrive and stopping when it dips below 0.05 badly inflates
+false positives — it is the most common way an evaluation fools itself. `watch` uses a **test
+martingale** instead: capital starts at 1 and is wagered on each episode pair, so under the
+null it is a martingale and Ville's inequality bounds the error at α **across every possible
+stopping time**. You may look as often as you like.
+
+**Measured on the 800 real rollouts in this repo**, not borrowed from a paper:
+
+| comparison | median stop | saving |
+|---|---:|---:|
+| smolvla vs upstream | 13 / 200 | **94%** |
+| act vs upstream | 14 / 200 | **93%** |
+| diffusion vs upstream | 23 / 200 | **88%** |
+| act vs diffusion | 39 / 200 | **80%** |
+| act vs smolvla *(genuinely no difference)* | never stops | **0%** — correctly declines |
+
+That last row is the important one. When there is nothing to find, the test does not find
+something; it reports `CONTINUE` and says plainly that this is *absence of evidence, not
+evidence of equivalence*.
+
+The false-positive rate is verified by simulation as a **release gate**, not a diagnostic —
+20,000 null runs per configuration, across four base rates, two α levels and run lengths up
+to 600. If empirical FPR ever exceeds α, `watch` does not ship.
 
 ## Structural refusals
 
@@ -317,9 +358,11 @@ Scope discipline is a feature. Verdikt will never:
 | Status | Feature |
 |:---:|---|
 | ✅ | `ingest` · `plan` · `compare` · `doctor` · `manifest` / `diff` |
-| 🔜 | `lint` — five dataset rules, each with a deliberately-corrupted test fixture |
-| 🔜 | `report` — self-contained HTML + LeRobot-format model card |
-| 🔜 | `watch` — anytime-valid sequential stopping (*ends evals early*), gated on a 20,000-run false-positive calibration suite |
+| ✅ | `lint` — six dataset rules, each with a deliberately-corrupted test fixture |
+| ✅ | `report` — self-contained HTML + LeRobot-format model card |
+| ✅ | `watch` — anytime-valid sequential stopping, past its 20,000-run false-positive gate |
+| 🔜 | `gate` — GitHub Action wrapping the four-state exit code |
+| 🔜 | W&B write-back |
 | 🔬 | `profile` — dataset multimodality bound, `--experimental` only, gated on a published calibration experiment |
 
 ---
