@@ -211,6 +211,30 @@ The false-positive rate is verified by simulation as a **release gate**, not a d
 20,000 null runs per configuration, across four base rates, two α levels and run lengths up
 to 600. If empirical FPR ever exceeds α, `watch` does not ship.
 
+## Gate a merge on evidence, not on a point estimate
+
+```yaml
+- uses: muhammadmahadazher/Verdikt@main
+  with:
+    results: "eval/*.json"
+    baseline: production
+    min-lower-bound: "0.60"     # the CI lower bound must clear 60% - not the estimate
+```
+
+The action writes a job summary with the full table, intervals and group letters, and exposes
+`verdict`, `exit-code` and `required-n` as outputs. Its behaviour follows the four states:
+
+| Verdict | Default in CI | Why |
+|---|---|---|
+| `BETTER` | ✅ pass | no regression, and the design could have found one |
+| `REGRESSION` | ❌ fail | the candidate is significantly worse |
+| `UNDERPOWERED` | ⚠️ warn | *"we can't tell yet"* is a reason to run more episodes, not to block a merge — flip `fail-on-underpowered` if you disagree |
+| `NOT COMPARABLE` | ❌ fail | a confound makes the number meaningless |
+
+Three scenarios run against the committed corpus on every push
+([gate-selftest.yml](.github/workflows/gate-selftest.yml)) — a genuine improvement passes, a
+real regression is caught, and the canonical 35%-vs-70%-at-n=20 case warns rather than blocks.
+
 ## Structural refusals
 
 These are enforced in the formatter, not left to the caller's discipline. They cannot be

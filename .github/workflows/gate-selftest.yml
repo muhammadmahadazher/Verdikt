@@ -1,0 +1,76 @@
+name: gate-selftest
+
+# Dogfooding: run the published action against the committed 800-rollout corpus on every
+# push. If the action ever breaks, this goes red before a user finds out.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  passing-case:
+    name: a genuine improvement passes the gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        uses: ./
+        with:
+          results: "tests/fixtures/pusht_n200/{diffusion,upstream}.json"
+          baseline: diffusion
+      - name: check the verdict
+        run: |
+          echo "verdict=${{ steps.gate.outputs.verdict }}"
+          test "${{ steps.gate.outputs.verdict }}" = "BETTER"
+
+  regression-case:
+    name: a real regression is caught
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        continue-on-error: true          # the gate is SUPPOSED to fail here
+        uses: ./
+        with:
+          results: "tests/fixtures/pusht_n200/{diffusion,act}.json"
+          baseline: diffusion
+      - name: the gate must have failed, and for the right reason
+        run: |
+          echo "verdict=${{ steps.gate.outputs.verdict }}"
+          test "${{ steps.gate.outputs.verdict }}" = "REGRESSION"
+          test "${{ steps.gate.outcome }}" = "failure"
+
+  underpowered-case:
+    name: an undecidable comparison warns instead of blocking
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        uses: ./
+        with:
+          # 35% vs 70% at n=20: looks decisive, is p=0.056. The canonical case.
+          results: "tests/fixtures/underpowered_n20/*.json"
+          baseline: candidate
+          fail-on-underpowered: "false"
+      - name: underpowered must not block a merge by default, and must say what would settle it
+        run: |
+          echo "verdict=${{ steps.gate.outputs.verdict }} required_n=${{ steps.gate.outputs.required-n }}"
+          test "${{ steps.gate.outputs.verdict }}" = "UNDERPOWERED"
+          test "${{ steps.gate.outcome }}" = "success"
+          test -n "${{ steps.gate.outputs.required-n }}"
+
+  underpowered-blocking:
+    name: the same comparison blocks when the repo opts in
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        continue-on-error: true
+        uses: ./
+        with:
+          results: "tests/fixtures/underpowered_n20/*.json"
+          baseline: candidate
+          fail-on-underpowered: "true"
+      - run: test "${{ steps.gate.outcome }}" = "failure"

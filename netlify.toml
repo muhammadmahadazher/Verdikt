@@ -1,0 +1,40 @@
+# Netlify build for the Verdikt demo site.
+#
+# The site is generated from the committed n=200 corpus, so every number on the deployed page
+# is produced by the same code path a user runs locally - there is no separate marketing copy
+# to drift out of date.
+#
+# One-time setup: Netlify -> Add new site -> Import from GitHub -> pick this repo.
+# Everything below is picked up automatically; no build settings need to be typed in the UI.
+
+[build]
+  command = "pip install -e . && python docs/build_site.py"
+  publish = "site"
+
+[build.environment]
+  PYTHON_VERSION = "3.12"
+
+# The report is a self-contained artifact: no external requests, no inline script.
+# The CSP below states that as policy rather than merely as an intention.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "SAMEORIGIN"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Content-Security-Policy = "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'none'; frame-ancestors 'self'"
+
+[[headers]]
+  for = "/*.png"
+  [headers.values]
+    Cache-Control = "public, max-age=604800"
+
+[[redirects]]
+  from = "/report"
+  to = "/report.html"
+  status = 200
+
+[[redirects]]
+  from = "/github"
+  to = "https://github.com/muhammadmahadazher/Verdikt"
+  status = 302

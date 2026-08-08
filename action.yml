@@ -1,0 +1,140 @@
+name: "Verdikt policy gate"
+description: >-
+  Decide whether a policy checkpoint may merge. Reads the eval JSON your harness already
+  wrote and fails the job only when the evidence supports failing it - never on a point
+  estimate, and never on a comparison the data cannot settle.
+author: "Muhammad Mahad Azher"
+branding:
+  icon: "check-circle"
+  color: "orange"
+
+inputs:
+  results:
+    description: "Glob of eval output files (any harness Verdikt has an adapter for)."
+    required: true
+  baseline:
+    description: "Policy id everything is judged against. Omit for a multi-arm comparison."
+    required: false
+    default: ""
+  manifests:
+    description: "Glob of run manifests, so budget confounds can be detected."
+    required: false
+    default: ""
+  test:
+    description: "fisher | barnard | boschloo"
+    required: false
+    default: "fisher"
+  alpha:
+    required: false
+    default: "0.05"
+  min-lower-bound:
+    description: >-
+      Require every candidate's confidence-interval LOWER bound to clear this value.
+      There is deliberately no threshold on the point estimate.
+    required: false
+    default: ""
+  noninferiority-margin:
+    description: "Pass if the candidate is no worse than the baseline by more than this."
+    required: false
+    default: ""
+  fail-on-underpowered:
+    description: >-
+      Whether an UNDERPOWERED result (exit 2) fails the job. Default false: 'we cannot tell
+      yet' is usually a reason to run more episodes, not to block a merge.
+    required: false
+    default: "false"
+  fail-on-not-comparable:
+    description: "Whether a confounded comparison (exit 3) fails the job."
+    required: false
+    default: "true"
+  verdikt-version:
+    description: "Version specifier to install."
+    required: false
+    default: "git+https://github.com/muhammadmahadazher/Verdikt"
+
+outputs:
+  verdict:
+    description: "BETTER | REGRESSION | UNDERPOWERED | NOT_COMPARABLE"
+    value: ${{ steps.run.outputs.verdict }}
+  exit-code:
+    description: "0 better, 1 regression, 2 underpowered, 3 not comparable"
+    value: ${{ steps.run.outputs.exit_code }}
+  required-n:
+    description: "Episodes per arm that would settle it, when the result was underpowered."
+    value: ${{ steps.run.outputs.required_n }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Verdikt
+      shell: bash
+      run: pip install --quiet "${{ inputs.verdikt-version }}"
+
+    - name: Run the gate
+      id: run
+      shell: bash
+      run: |
+        set +e
+        args=( "${{ inputs.results }}" --format json --test "${{ inputs.test }}" --alpha "${{ inputs.alpha }}" )
+        [ -n "${{ inputs.baseline }}" ] && args+=( --baseline "${{ inputs.baseline }}" )
+        [ -n "${{ inputs.manifests }}" ] && args+=( --manifests "${{ inputs.manifests }}" )
+        [ -n "${{ inputs.min-lower-bound }}" ] && args+=( --min-lower-bound "${{ inputs.min-lower-bound }}" )
+        [ -n "${{ inputs.noninferiority-margin }}" ] && args+=( --noninferiority "${{ inputs.noninferiority-margin }}" )
+
+        verdikt compare "${args[@]}" > verdikt-result.json
+        code=$?
+        set -e
+
+        python - <<'PY'
+        import json, os, pathlib
+        NAMES = {0: "BETTER", 1: "REGRESSION", 2: "UNDERPOWERED", 3: "NOT_COMPARABLE"}
+        data = json.loads(pathlib.Path("verdikt-result.json").read_text())
+        verdict = int(data["verdict"])
+        out = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+        with out.open("a") as fh:
+            fh.write(f"verdict={NAMES[verdict]}\n")
+            fh.write(f"exit_code={verdict}\n")
+            fh.write(f"required_n={data.get('required_n') or ''}\n")
+
+        icon = {0: "&#9989;", 1: "&#10060;", 2: "&#9888;&#65039;", 3: "&#128721;"}[verdict]
+        lines = [f"## {icon} Verdikt: {NAMES[verdict]}", "", f"_{data['reason']}_", "",
+                 "| policy | n | successes | rate | 95% CI | group |",
+                 "|---|---:|---:|---:|---|:---:|"]
+        for a in data["arms"]:
+            lines.append(
+                f"| `{a['policy_id']}` | {a['n']} | {a['successes']} | {a['rate']:.1%} | "
+                f"[{a['ci_low']:.1%}, {a['ci_high']:.1%}] | {a['letter'] or '-'} |")
+        lines += ["", "<sub>Arms sharing a group letter are not distinguishable at this n. "
+                  "Rates are never reported without an interval.</sub>"]
+        if data.get("required_n"):
+            lines += ["", f"> Underpowered: about **{data['required_n']} episodes per arm** "
+                      "would settle this."]
+        for c in data.get("confounds", []):
+            lines += ["", f"> **{c['kind']}** on `{c['field']}`: {c['message']}"]
+        pathlib.Path(os.environ["GITHUB_STEP_SUMMARY"]).write_text(
+            "\n".join(lines), encoding="utf-8")
+        PY
+
+        echo "exit code: $code"
+        case "$code" in
+          0) exit 0 ;;
+          1) echo "::error::Verdikt: the candidate is significantly worse than the baseline."
+             exit 1 ;;
+          2) if [ "${{ inputs.fail-on-underpowered }}" = "true" ]; then
+               echo "::error::Verdikt: not enough episodes to decide."; exit 1
+             else
+               echo "::warning::Verdikt: underpowered - run more episodes before trusting this."
+               exit 0
+             fi ;;
+          3) if [ "${{ inputs.fail-on-not-comparable }}" = "true" ]; then
+               echo "::error::Verdikt: these runs are confounded and were not ranked."; exit 1
+             else
+               echo "::warning::Verdikt: confounded comparison."; exit 0
+             fi ;;
+          *) echo "::error::Verdikt failed to run (exit $code)."; exit "$code" ;;
+        esac
