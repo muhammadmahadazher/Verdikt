@@ -473,6 +473,105 @@ def lint(dataset, train_config, fmt, fail_on):
         raise SystemExit(2)
 
 
+# ----------------------------------------------------------------- profile
+@main.command()
+@click.argument("dataset", type=click.Path(exists=True))
+@click.option("--experimental", is_flag=True,
+              help="required: this metric is provisional and reports a bound, not a prediction")
+@click.option("--k", type=int, default=24, show_default=True, help="neighbours per anchor")
+@click.option("--block-radius", type=int, default=15, show_default=True,
+              help="frames of the same episode excluded from a neighbourhood")
+@click.option("--sample", type=int, default=600, show_default=True,
+              help="anchors sampled (cost is roughly linear in this)")
+@click.option("--permutations", type=int, default=99, show_default=True)
+def profile(dataset, experimental, k, block_radius, sample, permutations):
+    """[EXPERIMENTAL] How much action variance can a deterministic policy not explain?
+
+    Reports a BOUND under the embeddings tested - never a success-rate prediction and never
+    an architecture recommendation. Requires agreement across at least two embeddings, and
+    refuses to answer when they disagree.
+    """
+    if not experimental:
+        raise click.ClickException(
+            "verdikt profile is provisional and must be run with --experimental.\n"
+            "it reports a bound under the embedding you give it, not a property of the "
+            "dataset, and it has not been validated against downstream policy performance.\n"
+            "false-positive calibration: docs/calibrate_profile.py"
+        )
+
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    from .lint import load as load_dataset
+    from .profile import profile as run_profile
+
+    view = load_dataset(dataset)
+    if view.errors or not view.data_files:
+        raise click.ClickException(f"cannot read dataset: {'; '.join(view.errors) or 'no data'}")
+
+    try:
+        import pyarrow as pa
+
+        cols = ["observation.state", "action", "episode_index"]
+        parts = [pq.read_table(p, columns=cols) for p in view.data_files]
+        table = parts[0] if len(parts) == 1 else pa.concat_tables(parts)
+    except Exception as exc:
+        raise click.ClickException(f"dataset lacks observation.state/action: {exc}") from exc
+
+    def matrix(col):
+        vals = table[col].to_pylist()
+        arr = np.asarray(vals, dtype=float)
+        return arr if arr.ndim == 2 else arr.reshape(-1, 1)
+
+    state, actions = matrix("observation.state"), matrix("action")
+    episodes = np.asarray(table["episode_index"])
+
+    # Two genuinely different views of the same frames. If the bound depends on which one you
+    # look through, that is a fact about the embedding, not the dataset - and verdikt says so.
+    velocity = np.vstack([np.zeros((1, state.shape[1])), np.diff(state, axis=0)])
+    velocity[np.concatenate([[True], episodes[1:] != episodes[:-1]])] = 0.0
+    embeddings = {
+        "observation.state": state,
+        "state + velocity": np.hstack([state, velocity]),
+    }
+
+    console.print()
+    console.print(f"[bold]{dataset}[/]")
+    console.print(f"[dim]{len(state)} frames · k={k} · block radius {block_radius} frames · "
+                  f"{permutations} permutations[/]")
+    with console.status("profiling embeddings..."):
+        results, verdict, explanation = run_profile(
+            embeddings, actions, episodes, k=k, block_radius=block_radius,
+            sample=sample, permutations=permutations)
+
+    table_out = Table(box=None, pad_edge=False, header_style="bold")
+    table_out.add_column("embedding")
+    table_out.add_column("anchors", justify="right")
+    table_out.add_column("AMR (L2)", justify="right")
+    table_out.add_column("MAD (L1)", justify="right")
+    table_out.add_column("multimodal", justify="right")
+    table_out.add_column("eff. dim", justify="right")
+    for r in results:
+        table_out.add_row(r.embedding_name, str(r.n_samples), f"{r.amr_l2:.3f}",
+                          f"{r.mad_l1:.3f}", f"{r.multimodal_fraction:.1%}",
+                          f"{r.participation_ratio:.1f}")
+    console.print()
+    console.print(table_out)
+    console.print("[dim]AMR bounds an L2 objective; MAD bounds an L1 objective (what ACT "
+                  "minimises). they are not interchangeable.[/]")
+
+    for r in results:
+        for note in r.notes:
+            console.print(f"  [yellow]{r.embedding_name}[/]: {note}")
+
+    style = "yellow" if verdict == "INSUFFICIENT EVIDENCE" else "cyan"
+    console.print(f"\n[{style}]{verdict}[/]")
+    for line in _wrap(explanation, 84):
+        console.print(f"  [dim]{line}[/]")
+    console.print("\n[dim]\\[provisional] this metric is not calibrated against downstream "
+                  "policy success. it is a bound under the embeddings shown, nothing more.[/]")
+
+
 # ---------------------------------------------------------------- manifest
 @main.command()
 @click.argument("run_dir", type=click.Path(exists=True))

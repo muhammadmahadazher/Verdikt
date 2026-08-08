@@ -380,6 +380,53 @@ None of the three. It reads files. Every command runs on a laptop in seconds.
 
 ---
 
+## 🔬 Experimental: how much can a deterministic policy even explain?
+
+```bash
+verdikt profile <dataset> --experimental
+```
+
+Demonstrations are often multimodal — from the same state, several actions are all correct.
+A deterministic head must pick one, so it drifts toward the conditional mean, which may be an
+action no demonstrator ever took. That is the usual story for why ACT plateaus where diffusion
+succeeds. **Measuring it rigorously is much harder than measuring it.**
+
+Three failure modes are designed around, because the obvious implementation hits all three:
+
+| Trap | What goes wrong | Fix |
+|---|---|---|
+| Neighbours aren't independent | k-NN inside an episode returns consecutive frames of the *same* trajectory | exclude ±15 frames of the same episode |
+| A Gaussian null | collapses on heavy tails — **FPR 0.47 under t(3)** | permutation null resampled from the data's own residuals |
+| The bound doesn't bind the policy | proprioception excludes the object pose the policy actually sees | require ≥2 embeddings, refuse when they disagree |
+
+**Calibration gate** (`docs/calibrate_profile.py`) — 16 cells, three seeds each, on data that is
+unimodal *by construction*, so every detection is a false positive:
+
+| noise | Gaussian | t(8) | t(5) | t(3) |
+|---|---:|---:|---:|---:|
+| FPR (episode-blocked) | 0.038–0.044 | 0.059–0.067 | 0.044 | 0.056–0.064 |
+
+Nominal α = 0.05, ship threshold 0.07, worst cell **0.067**. It ships.
+
+**And on the real `lerobot/pusht` it refuses to answer** — which is the point:
+
+```
+embedding          anchors  AMR (L2)  MAD (L1)  multimodal  eff. dim
+observation.state      400     0.041     0.160       15.5%       2.0
+state + velocity       400     0.018     0.108        4.5%       2.0
+
+INSUFFICIENT EVIDENCE
+  the embeddings disagree on multimodality (4.5% vs 15.5%); the higher reading is
+  explained by a feature the smaller embedding is missing rather than by competing
+  actions, so no dataset-level claim is supported
+```
+
+Position alone says 15% multimodal; adding velocity drops it to the null level. Those were the
+same states revisited at different phases of motion — not competing actions. A tool that
+averaged the two, or reported the first, would have invented a fact. Every line is tagged
+`[provisional]`: it is a bound under the embeddings shown, never a success-rate prediction and
+never an architecture recommendation.
+
 ## What Verdikt deliberately does **not** do
 
 Scope discipline is a feature. Verdikt will never:
@@ -404,7 +451,7 @@ Scope discipline is a feature. Verdikt will never:
 | ✅ | `watch` — anytime-valid sequential stopping, past its 20,000-run false-positive gate |
 | ✅ | `gate` — GitHub Action wrapping the four-state exit code, dogfooded in CI |
 | ✅ | W&B write-back |
-| 🔬 | `profile` — dataset multimodality bound, `--experimental` only, gated on a published calibration experiment |
+| 🔬 | `profile` — dataset multimodality bound, `--experimental` only, past its calibration gate |
 
 ---
 
