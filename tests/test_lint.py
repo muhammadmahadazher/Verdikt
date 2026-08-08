@@ -116,6 +116,43 @@ class TestCorruptions:
         assert "lag" in msg
 
 
+class TestMultiShard:
+    """A fault confined to shard three survives a spot check and then costs a training run,
+    so every frame-reading rule must read every shard - and must not invent a fault at the
+    seam between them."""
+
+    @pytest.fixture
+    def split(self, tmp_path):
+        import pyarrow.parquet as pq
+
+        root = build(tmp_path / "split")
+        src = root / "data" / "chunk-000" / "file-000.parquet"
+        table = pq.read_table(src)
+        boundary = 3 * 40  # an episode boundary, so no episode straddles two shards
+        pq.write_table(table.slice(0, boundary), src)
+        pq.write_table(table.slice(boundary),
+                       root / "data" / "chunk-000" / "file-001.parquet")
+        return root
+
+    def test_no_false_positives_across_a_shard_boundary(self, split):
+        findings = run_all(split, MEANSTD_CONFIG)
+        noisy = [f for f in findings
+                 if f.severity in ("error", "warning") and f.rule_id != "DS004"]
+        assert noisy == [], f"shard split invented findings: {noisy}"
+
+    def test_statistics_are_recomputed_over_all_shards(self, split):
+        findings = run_all(split, MEANSTD_CONFIG)
+        assert "error" not in severities(findings, "DS005"), \
+            "stats must be recomputed across every shard, not just the first"
+
+    def test_orphaned_shard_is_reported(self, split):
+        """The second shard is on disk but no episode points at it."""
+        findings = run_all(split, MEANSTD_CONFIG)
+        ds004 = [f for f in findings if f.rule_id == "DS004"]
+        assert any("orphaned" in f.message or "referenced by no episode" in f.message
+                   for f in ds004)
+
+
 class TestEngine:
     def test_missing_dataset_reports_cleanly(self, tmp_path):
         findings = run_all(tmp_path / "nothing-here")

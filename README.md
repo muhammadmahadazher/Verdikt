@@ -13,7 +13,7 @@ support.
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
 [![Live demo](https://img.shields.io/badge/live_demo-verdikt-58A6FF)](https://relaxed-heliotrope-271cc3.netlify.app)
-[![Tests](https://img.shields.io/badge/tests-156_passing-3FB950)](tests/)
+[![Tests](https://img.shields.io/badge/tests-159_passing-3FB950)](tests/)
 [![codecov](https://codecov.io/gh/muhammadmahadazher/Verdikt/branch/main/graph/badge.svg)](https://codecov.io/gh/muhammadmahadazher/Verdikt)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
