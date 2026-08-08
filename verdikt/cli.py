@@ -281,6 +281,18 @@ def _print_text(result, baseline, plan_obj) -> None:
     console.print(table)
     console.print("[dim]arms sharing a group letter are not distinguishable at this n[/]")
 
+    # An episode that carries no success label is not a success. Dropping it silently turns
+    # a broken grader into a perfect score, so it is always reported.
+    ungraded = [a for a in result.arms if a.n_ungraded]
+    if ungraded:
+        console.print()
+        for a in ungraded:
+            total = a.n + a.n_ungraded
+            console.print(f"  [yellow]{a.policy_id}: {a.n_ungraded} of {total} rollouts carry "
+                          f"no success label[/] and are excluded from n.")
+        console.print("  [dim]the rate above describes only the graded episodes. if your "
+                      "grader failed, this rate is not the number you think it is.[/]")
+
     for a in result.arms:
         if a.successes == 0 and a.one_sided_bound is not None:
             console.print(f"\n  [yellow]{a.successes}/{a.n} does not mean zero.[/] "
@@ -369,6 +381,57 @@ def doctor(train_config, dataset_meta, fail_on):
         raise SystemExit(2)
 
 
+# -------------------------------------------------------------------- lint
+@main.command()
+@click.argument("dataset", type=click.Path(exists=True))
+@click.option("--train-config", type=click.Path(exists=True), default=None,
+              help="check normalisation feasibility against what your policy requests")
+@click.option("--format", "fmt", type=click.Choice(["text", "json", "sarif"]), default="text",
+              show_default=True)
+@click.option("--fail-on", type=click.Choice(["error", "warning", "never"]), default="error",
+              show_default=True)
+def lint(dataset, train_config, fmt, fail_on):
+    """Check a LeRobot dataset for the silent misconfigurations that cost GPU-hours.
+
+    Never imports lerobot: it reads meta/*.json and the parquet files directly, so it still
+    works when the training stack itself is broken.
+    """
+    from .lint import run_all, to_sarif
+
+    cfg = None
+    if train_config:
+        cfg = json.loads(Path(train_config).read_text(encoding="utf-8"))
+    findings = run_all(dataset, cfg)
+
+    if fmt == "sarif":
+        click.echo(json.dumps(to_sarif(findings, __version__), indent=2))
+    elif fmt == "json":
+        click.echo(json.dumps([f.model_dump() for f in findings], indent=2))
+    else:
+        console.print()
+        console.print(f"[bold]{dataset}[/]")
+        icon = {"error": "[red]ERROR[/]", "warning": "[yellow]WARN [/]", "info": "[dim]ok   [/]"}
+        for f in findings:
+            console.print(f"{icon[f.severity]} [bold]{f.rule_id}[/]  {f.message}")
+            for line in _wrap(f.detail, 76):
+                console.print(f"        [dim]{line}[/]")
+            if f.fix:
+                console.print(f"        [cyan]fix:[/] {f.fix}")
+            if f.citation:
+                console.print(f"        [dim]{f.citation}[/]")
+        errors = sum(f.severity == "error" for f in findings)
+        warnings = sum(f.severity == "warning" for f in findings)
+        console.print(f"\n{errors} error(s), {warnings} warning(s), "
+                      f"{len(findings) - errors - warnings} passed")
+
+    errors = sum(f.severity == "error" for f in findings)
+    warnings = sum(f.severity == "warning" for f in findings)
+    if fail_on == "error" and errors:
+        raise SystemExit(2)
+    if fail_on == "warning" and (errors or warnings):
+        raise SystemExit(2)
+
+
 # ---------------------------------------------------------------- manifest
 @main.command()
 @click.argument("run_dir", type=click.Path(exists=True))
@@ -431,6 +494,54 @@ def diff(manifest_a, manifest_b):
     console.print("[dim]the flagged difference is a sufficient alternative explanation for "
                   "any gap you measure between them.[/]")
     raise SystemExit(3)
+
+
+# ------------------------------------------------------------------ report
+@main.command()
+@click.argument("paths", nargs=-1, required=True)
+@click.option("--baseline", default=None)
+@click.option("--adapter", type=click.Choice(available()), default=None)
+@click.option("--manifests", multiple=True)
+@click.option("--dataset", type=click.Path(exists=True), default=None,
+              help="also lint this dataset and include the findings")
+@click.option("--test", type=click.Choice(["fisher", "barnard", "boschloo"]), default="fisher",
+              show_default=True)
+@click.option("--alpha", type=float, default=0.05, show_default=True)
+@click.option("-o", "--out", type=click.Path(), default="report.html", show_default=True)
+@click.option("--modelcard", type=click.Path(), default=None,
+              help="also write a LeRobot-format model card")
+@click.option("--task", default="unknown", help="task name for the model card")
+def report(paths, baseline, adapter, manifests, dataset, test, alpha, out, modelcard, task):
+    """One self-contained HTML file you can hand to your lead, plus a model card."""
+    from .lint import run_all as lint_all
+    from .report import render_html, render_model_card
+
+    rollouts = _load(paths, adapter, None)
+    mans: dict[str, RunManifest] = {}
+    for pattern in manifests:
+        for hit in glob.glob(pattern) or [pattern]:
+            m = RunManifest.model_validate_json(Path(hit).read_text(encoding="utf-8"))
+            mans[m.policy_id] = m
+
+    result = run_compare(rollouts, baseline, manifests=mans, test=test, alpha=alpha)
+    posteriors = posterior_table(result.arms, baseline) if baseline else {}
+    findings = lint_all(dataset) if dataset else []
+
+    Path(out).parent.mkdir(parents=True, exist_ok=True)
+    Path(out).write_text(
+        render_html(result, baseline=baseline, posteriors=posteriors, lint_findings=findings),
+        encoding="utf-8")
+    console.print(f"[green]wrote[/] {out}  [dim]self-contained, no external assets[/]")
+
+    if modelcard:
+        Path(modelcard).write_text(
+            render_model_card(result, task=task,
+                              eval_command=f"verdikt compare {' '.join(paths)}"),
+            encoding="utf-8")
+        console.print(f"[green]wrote[/] {modelcard}")
+
+    _echo_verdict(result.verdict, result.reason)
+    raise SystemExit(int(result.verdict))
 
 
 def _field_delta(a: str, b: str) -> list[str]:

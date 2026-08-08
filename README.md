@@ -12,7 +12,7 @@ support.
 [![Python](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-26_passing-3FB950)](tests/)
+[![Tests](https://img.shields.io/badge/tests-97_passing-3FB950)](tests/)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
 <img src="docs/workflow.png" width="96%" alt="Verdikt architecture: every command reads a file that already exists"/>
@@ -227,6 +227,31 @@ what differs
 The study's **qualitative** finding survives — generative action heads beat deterministic
 regression on multimodal demonstrations. The **precision of the headline** does not. That
 correction is now published in the study itself.
+
+### Then we re-ran the evaluation at n=200 and watched the fog clear
+
+<div align="center">
+<img src="docs/n_matters.png" width="96%" alt="The same four policies at n=20 and at n=200"/>
+</div>
+
+Same four checkpoints, same task, ten times the episodes — 800 rollouts of inference, no
+retraining. At n=20 the tool could only say *"two groups, and one comparison is too close to
+call."* At n=200 every pair separates and **three** distinct performance tiers appear:
+
+| policy | n=20 | n=200 | 95% CI at n=200 | group |
+|---|---:|---:|---|:---:|
+| upstream diffusion | 70% | **65.5%** | [58.7, 71.7] | c |
+| diffusion 50k | 35% | **24.0%** | [18.6, 30.4] | b |
+| act 50k | 0% | **1.0%** | [0.3, 3.6] | a |
+| smolvla 20k | 0% | **0.0%** (≤1.5%) | [0.0, 1.9] | a |
+
+Note what n=20 got *wrong in both directions*: diffusion looked like 35% and is really 24%;
+ACT looked like a flat 0% and actually solves 1% of episodes. Neither error was detectable
+from the smaller sample — which is the entire argument for computing required-N before you
+run the eval rather than after.
+
+This corpus ships in the repo as `tests/fixtures/pusht_n200/`, so every statistical feature
+is demonstrated on real robot-policy rollouts rather than synthetic numbers.
 
 ---
 

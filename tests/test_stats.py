@@ -97,3 +97,38 @@ class TestPower:
     def test_equal_rates_refused(self):
         with pytest.raises(ValueError, match="no effect to detect"):
             required_n(0.5, 0.5)
+
+
+class TestPowerOptimisationIsExact:
+    """The boundary sweep is an optimisation, not an approximation.
+
+    power_exact skips most of the outcome table by exploiting the fact that Fisher p-values
+    fall monotonically as the two counts separate. If that ever stops holding, these tests go
+    red rather than the tool quietly reporting slightly wrong power.
+    """
+
+    @pytest.mark.parametrize("n", [2, 3, 5, 10, 17, 31, 50])
+    @pytest.mark.parametrize("p0,p1", [(0.35, 0.70), (0.5, 0.5), (0.1, 0.4), (0.9, 0.2)])
+    def test_matches_bruteforce_for_fisher(self, n, p0, p1):
+        from verdikt.stats.power import power_bruteforce
+
+        fast = power_exact(n, p0, p1, 0.05, "fisher")
+        brute = power_bruteforce(n, p0, p1, 0.05, "fisher")
+        assert fast == pytest.approx(brute, abs=1e-12)
+
+    def test_unconditional_tests_use_the_exact_enumeration(self):
+        """Barnard's two-sided p-value is not perfectly monotone, so it must not take the
+        shortcut - it is routed to full enumeration instead."""
+        from verdikt.stats.power import power_bruteforce
+
+        fast = power_exact(20, 0.2, 0.6, 0.05, "barnard")
+        brute = power_bruteforce(20, 0.2, 0.6, 0.05, "barnard")
+        assert fast == pytest.approx(brute, abs=1e-12)
+
+    def test_large_n_stays_interactive(self):
+        """A planner nobody waits for is a planner nobody runs."""
+        import time
+
+        start = time.perf_counter()
+        power_exact(500, 0.5, 0.60, 0.05, "fisher")
+        assert time.perf_counter() - start < 2.0

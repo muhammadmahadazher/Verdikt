@@ -64,6 +64,7 @@ class ArmSummary(BaseModel):
     policy_id: str
     n: int
     successes: int
+    n_ungraded: int = 0  # rollouts present but carrying no success label - never hidden
     rate: float
     ci_low: float
     ci_high: float

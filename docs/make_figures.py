@@ -195,7 +195,61 @@ def fig_workflow() -> None:
     print("wrote docs/workflow.png")
 
 
+# --------------------------------------------------------------- figure 4
+def fig_n_matters() -> None:
+    """The same four policies at n=20 and at n=200. Nothing changed but the evidence."""
+    import json
+
+    fixtures = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "pusht_n200"
+    n200 = {}
+    for name in ("upstream", "diffusion", "act", "smolvla"):
+        f = fixtures / f"{name}.json"
+        if not f.exists():
+            print("skipping fig_n_matters: n=200 corpus not present")
+            return
+        succ = json.loads(f.read_text())["per_task"][0]["metrics"]["successes"]
+        n200[name] = (sum(bool(s) for s in succ), len(succ))
+
+    n20 = {"upstream": (14, 20), "diffusion": (7, 20), "act": (0, 20), "smolvla": (0, 20)}
+    order = ["upstream", "diffusion", "act", "smolvla"]
+    labels = {"upstream": "upstream diffusion", "diffusion": "diffusion 50k",
+              "act": "act 50k", "smolvla": "smolvla 20k"}
+
+    fig, axes = plt.subplots(1, 2, figsize=(13.5, 4.6), sharey=True)
+    for ax, data, title in ((axes[0], n20, "n = 20 per arm"),
+                            (axes[1], n200, "n = 200 per arm")):
+        for i, key in enumerate(order):
+            k, n = data[key]
+            lo, hi = wilson(k, n)
+            y = len(order) - i
+            colour = theme.SERIES[i % len(theme.SERIES)]
+            ax.plot([lo * 100, hi * 100], [y, y], color=colour, lw=3.4,
+                    solid_capstyle="round")
+            ax.scatter([k / n * 100], [y], color=colour, s=62, zorder=5)
+            ax.text(102, y, f"{k}/{n}", ha="left", va="center", color=theme.TEXT_DIM,
+                    fontsize=8.5)
+        ax.set_xlim(-4, 118)
+        ax.set_ylim(0.4, len(order) + 0.6)
+        ax.set_xticks([0, 25, 50, 75, 100])
+        ax.set_title(title, loc="left")
+        ax.set_xlabel("success rate (%), Wilson 95% interval")
+    axes[0].set_yticks(range(1, len(order) + 1))
+    axes[0].set_yticklabels([labels[k] for k in reversed(order)], fontsize=9.5)
+
+    axes[0].text(56, 0.75, "diffusion and upstream overlap\np = 0.056", color=theme.WARN,
+                 fontsize=9, ha="center")
+    axes[1].text(50, 0.75, "every pair separated\nthree distinct groups", color=theme.OK,
+                 fontsize=9, ha="center")
+
+    fig.suptitle("same four policies, ten times the evidence", x=0.008, ha="left",
+                 color=theme.TEXT_DIM, fontsize=11)
+    fig.tight_layout()
+    fig.savefig(DOCS / "n_matters.png", dpi=150)
+    print("wrote docs/n_matters.png")
+
+
 if __name__ == "__main__":
     fig_power()
     fig_audit()
     fig_workflow()
+    fig_n_matters()

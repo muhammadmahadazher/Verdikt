@@ -70,26 +70,47 @@ def holm(p_values: list[float], alpha: float = 0.05) -> list[bool]:
 def compact_letters(names: list[str], significant: dict[tuple[str, str], bool]) -> dict[str, str]:
     """Compact letter display: arms sharing a letter are not distinguishable at this n.
 
-    Reading a table of pairwise p-values is error-prone; letters make the grouping visible
-    at a glance, and make "we cannot tell these apart" as legible as "these differ".
+    The contract has two halves and both must hold:
+      1. two arms that are NOT significantly different share at least one letter;
+      2. two arms that ARE significantly different share no letter.
+
+    A greedy first-fit assignment satisfies (2) but silently violates (1) - with a~b, b~c and
+    a!=c it hands out {a:'a', b:'a', c:'b'}, which tells the reader b and c differ when the
+    test never said so. The correct construction is the set of maximal cliques of the
+    "not significantly different" graph: every non-significant pair is an edge, and every edge
+    lies inside some maximal clique, so (1) holds by construction; cliques contain no
+    non-edges, so (2) holds too.
     """
 
     def differs(a: str, b: str) -> bool:
         return significant.get((a, b), significant.get((b, a), False))
 
-    groups: list[list[str]] = []
-    for name in names:
-        placed = False
-        for g in groups:
-            if all(not differs(name, other) for other in g):
-                g.append(name)
-                placed = True
-        if not placed:
-            groups.append([name])
+    adjacency = {n: {m for m in names if m != n and not differs(n, m)} for n in names}
+    cliques = sorted(_maximal_cliques(names, adjacency),
+                     key=lambda c: (-len(c), sorted(c)))
 
     letters: dict[str, str] = {n: "" for n in names}
-    for i, g in enumerate(groups):
-        ch = chr(ord("a") + i)
-        for n in g:
+    for i, clique in enumerate(cliques):
+        ch = chr(ord("a") + i) if i < 26 else f"({i + 1})"
+        for n in clique:
             letters[n] += ch
     return letters
+
+
+def _maximal_cliques(names: list[str], adjacency: dict[str, set[str]]) -> list[set[str]]:
+    """Bron-Kerbosch with pivoting. Arm counts are small, so the exponential worst case
+    is irrelevant here."""
+    out: list[set[str]] = []
+
+    def expand(r: set[str], p: set[str], x: set[str]) -> None:
+        if not p and not x:
+            out.append(set(r))
+            return
+        pivot = max(p | x, key=lambda v: len(adjacency[v]))
+        for v in list(p - adjacency[pivot]):
+            expand(r | {v}, p & adjacency[v], x & adjacency[v])
+            p = p - {v}
+            x = x | {v}
+
+    expand(set(), set(names), set())
+    return out
