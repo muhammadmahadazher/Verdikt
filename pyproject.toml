@@ -3,7 +3,10 @@ requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "verdikt"
+# The distribution is `verdikt-eval` because `verdikt` was already taken on PyPI by an
+# unrelated placeholder. The import package and the console command are both still `verdikt`:
+#     pip install verdikt-eval   ->   import verdikt ;  $ verdikt compare ...
+name = "verdikt-eval"
 version = "0.1.0"
 description = "A CPU-only decision layer for robot-policy evaluation: reads the eval JSON you already have and refuses to let you draw a conclusion the data does not support."
 readme = "README.md"

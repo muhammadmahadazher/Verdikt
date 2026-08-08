@@ -103,7 +103,13 @@ pip install git+https://github.com/muhammadmahadazher/Verdikt
 *Identical on macOS — Verdikt is pure CPU Python, so Apple Silicon and Intel both just work.*
 </details>
 
-**Optional extras:** `pip install "verdikt[hub,gpu,wandb]"` — HuggingFace dataset resolution,
+> **On the name:** once released, the PyPI distribution will be **`verdikt-eval`** — plain
+> `verdikt` is held by an unrelated placeholder package. The import package and the command
+> are unaffected: `pip install verdikt-eval` gives you `import verdikt` and `$ verdikt`,
+> the same way `python-dateutil` gives you `import dateutil`. Until then, install from git
+> as shown above.
+
+**Optional extras:** `pip install "verdikt-eval[hub,gpu,wandb]"` — HuggingFace dataset resolution,
 NVIDIA device detection for `doctor`, and Weights & Biases write-back.
 
 **From source (for development):**

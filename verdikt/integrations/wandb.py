@@ -103,7 +103,7 @@ def push(result: ComparisonResult, run_path: str, *, baseline: str | None = None
         import wandb
     except ImportError as exc:  # pragma: no cover - exercised by the CLI error path
         raise RuntimeError(
-            "W&B write-back needs the wandb package: pip install 'verdikt[wandb]'"
+            "W&B write-back needs the wandb package: pip install 'verdikt-eval[wandb]'"
         ) from exc
 
     entity, project, run_id = parse_run_path(run_path)

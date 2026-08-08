@@ -5,7 +5,7 @@ name: release
 # Uses PyPI Trusted Publishing (OIDC), so there is no API token stored in this repository and
 # nothing to rotate or leak. One-time setup on PyPI:
 #   pypi.org -> Your projects -> Publishing -> Add a new pending publisher
-#     PyPI project name : verdikt
+#     PyPI project name : verdikt-eval
 #     Owner             : muhammadmahadazher
 #     Repository        : Verdikt
 #     Workflow          : release.yml
