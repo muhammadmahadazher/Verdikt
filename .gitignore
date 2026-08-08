@@ -20,3 +20,6 @@ scratch/
 # keep committed docs images and test fixtures
 !docs/*.png
 !tests/fixtures/**
+
+# generated demo site (rebuild with docs/build_site.py)
+site/
