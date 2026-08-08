@@ -1,0 +1,76 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "verdikt"
+version = "0.1.0"
+description = "A CPU-only decision layer for robot-policy evaluation: reads the eval JSON you already have and refuses to let you draw a conclusion the data does not support."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "Muhammad Mahad Azher" }]
+keywords = [
+    "robotics", "robot-learning", "imitation-learning", "policy-evaluation",
+    "statistics", "benchmarking", "lerobot", "vla", "vision-language-action",
+    "regression-testing", "reproducibility", "confidence-intervals", "mlops",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Testing",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.11",
+    "statsmodels>=0.14",
+    "pyarrow>=14",
+    "pandas>=2.0",
+    "click>=8.1",
+    "rich>=13.0",
+    "jinja2>=3.1",
+    "matplotlib>=3.7",
+    "pydantic>=2.5",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+hub = ["huggingface_hub>=0.20"]
+wandb = ["wandb>=0.16"]
+gpu = ["pynvml>=11.5"]
+dev = ["pytest>=7.4", "pytest-cov>=4.1", "ruff>=0.4"]
+
+[project.urls]
+Homepage = "https://github.com/muhammadmahadazher/Verdikt"
+Repository = "https://github.com/muhammadmahadazher/Verdikt"
+Issues = "https://github.com/muhammadmahadazher/Verdikt/issues"
+Documentation = "https://github.com/muhammadmahadazher/Verdikt#readme"
+
+[project.scripts]
+verdikt = "verdikt.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["verdikt*"]
+
+[tool.setuptools.package-data]
+verdikt = ["report/templates/*.j2", "lint/rules/*.yaml"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# pycodestyle, pyflakes, import order, bugbear. Implicit string concatenation inside tuple
+# returns is used deliberately throughout the verdict messages, so ISC is not selected.
+select = ["E", "F", "I", "W", "B"]
+ignore = ["E501"]  # line length is enforced by the formatter, not the linter
