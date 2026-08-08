@@ -23,3 +23,6 @@ scratch/
 
 # generated demo site (rebuild with docs/build_site.py)
 site/
+
+dist/
+build/

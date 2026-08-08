@@ -1,0 +1,97 @@
+name: release
+
+# Publishes to PyPI when a version tag is pushed.
+#
+# Uses PyPI Trusted Publishing (OIDC), so there is no API token stored in this repository and
+# nothing to rotate or leak. One-time setup on PyPI:
+#   pypi.org -> Your projects -> Publishing -> Add a new pending publisher
+#     PyPI project name : verdikt
+#     Owner             : muhammadmahadazher
+#     Repository        : Verdikt
+#     Workflow          : release.yml
+#     Environment       : pypi
+#
+# Then:  git tag v0.1.0 && git push origin v0.1.0
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: the full suite must pass before anything is published
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: ruff check verdikt tests docs
+      - run: pytest -q
+
+  build:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+
+      - name: the wheel must work outside the source tree
+        run: |
+          python -m venv /tmp/clean
+          /tmp/clean/bin/pip install --quiet dist/*.whl
+          cd /tmp                                  # away from the checkout, so imports are real
+          /tmp/clean/bin/verdikt --version
+          /tmp/clean/bin/python -c "import verdikt.profile, verdikt.sequential, verdikt.report"
+
+      - name: the tag must match the packaged version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg=$(python -c "import tomllib,pathlib;print(tomllib.loads(pathlib.Path('pyproject.toml').read_text())['project']['version'])")
+          echo "tag=$tag package=$pkg"
+          test "$tag" = "$pkg" || { echo "::error::tag $tag does not match version $pkg"; exit 1; }
+        if: startsWith(github.ref, 'refs/tags/v')
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write          # required for trusted publishing; no token secret needed
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true

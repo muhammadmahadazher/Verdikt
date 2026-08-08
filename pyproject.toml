@@ -59,9 +59,6 @@ verdikt = "verdikt.cli:main"
 [tool.setuptools.packages.find]
 include = ["verdikt*"]
 
-[tool.setuptools.package-data]
-verdikt = ["report/templates/*.j2", "lint/rules/*.yaml"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 
