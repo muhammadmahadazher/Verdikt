@@ -49,6 +49,33 @@ class TestJsonContract:
                                         "must agree"
 
 
+class TestBraceExpansion:
+    """A quoted {a,b} pattern never reaches the shell, and Python's glob has no brace syntax.
+
+    The gate self-test found this the hard way: the action passed
+    `pusht_n200/{diffusion,upstream}.json`, glob matched nothing, and the job failed with a
+    confusing "no files matched". Users will write this pattern because it works unquoted.
+    """
+
+    @pytest.mark.parametrize("pattern,expected", [
+        ("a/{x,y}.json", ["a/x.json", "a/y.json"]),
+        ("{a,b}/{x,y}.json", ["a/x.json", "a/y.json", "b/x.json", "b/y.json"]),
+        ("a/*.json", ["a/*.json"]),
+        ("plain.json", ["plain.json"]),
+        ("{one}.json", ["one.json"]),
+        ("un{balanced.json", ["un{balanced.json"]),
+    ])
+    def test_expansion(self, pattern, expected):
+        from verdikt.cli import _expand_braces
+
+        assert _expand_braces(pattern) == expected
+
+    def test_brace_pattern_works_end_to_end(self):
+        code, data = run_compare("pusht_n200/{diffusion,upstream}.json", "diffusion")
+        assert code == 0 and data["verdict"] == 0
+        assert {a["policy_id"] for a in data["arms"]} == {"diffusion", "upstream"}
+
+
 class TestGateScenarios:
     """Each scenario in .github/workflows/gate-selftest.yml, asserted here too, so a break
     is caught by pytest rather than only by a red workflow."""

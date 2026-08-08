@@ -51,13 +51,54 @@ def _wrap(text: str, width: int) -> list[str]:
     return lines
 
 
+def _expand_braces(pattern: str) -> list[str]:
+    """Expand shell-style {a,b} alternatives.
+
+    A quoted pattern never reaches the shell, so `"runs/{act,upstream}.json"` arrives here
+    literally and Python's glob - which has no brace syntax - silently matches nothing. Users
+    reasonably expect it to work because it does when unquoted, so we expand it ourselves.
+    """
+    start = pattern.find("{")
+    if start == -1:
+        return [pattern]
+    depth = 0
+    for i in range(start, len(pattern)):
+        if pattern[i] == "{":
+            depth += 1
+        elif pattern[i] == "}":
+            depth -= 1
+            if depth == 0:
+                head, body, tail = pattern[:start], pattern[start + 1:i], pattern[i + 1:]
+                parts, level, current = [], 0, ""
+                for ch in body:
+                    if ch == "," and level == 0:
+                        parts.append(current)
+                        current = ""
+                        continue
+                    level += (ch == "{") - (ch == "}")
+                    current += ch
+                parts.append(current)
+                out = []
+                for part in parts:
+                    out.extend(_expand_braces(f"{head}{part}{tail}"))
+                return out
+    return [pattern]  # unbalanced brace: leave it alone rather than guess
+
+
 def _load(paths: tuple[str, ...], adapter: str | None, policy_id: str | None,
           mapping: dict[str, str] | None = None) -> list[Rollout]:
     expanded: list[Path] = []
-    for p in paths:
-        hits = [Path(h) for h in glob.glob(p)] or ([Path(p)] if Path(p).exists() else [])
+    for raw in paths:
+        hits: list[Path] = []
+        for p in _expand_braces(raw):
+            hits.extend(Path(h) for h in glob.glob(p))
+            if not hits and Path(p).exists():
+                hits.append(Path(p))
         if not hits:
-            raise click.ClickException(f"no files matched {p!r}")
+            raise click.ClickException(
+                f"no files matched {raw!r}. note that brace patterns are expanded by verdikt, "
+                "so check the paths themselves exist."
+            )
         expanded.extend(hits)
 
     rollouts: list[Rollout] = []
