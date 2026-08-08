@@ -13,7 +13,7 @@ support.
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
 [![Live demo](https://img.shields.io/badge/live_demo-verdikt-58A6FF)](https://relaxed-heliotrope-271cc3.netlify.app)
-[![Tests](https://img.shields.io/badge/tests-169_passing-3FB950)](tests/)
+[![Tests](https://img.shields.io/badge/tests-172_passing-3FB950)](tests/)
 [![codecov](https://codecov.io/gh/muhammadmahadazher/Verdikt/branch/main/graph/badge.svg)](https://codecov.io/gh/muhammadmahadazher/Verdikt)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
@@ -197,19 +197,30 @@ The false-positive rate is verified by simulation as a **release gate**, not a d
 20,000 null runs per configuration, across four base rates, two α levels and run lengths up
 to 600. If empirical FPR ever exceeds α, `watch` does not ship.
 
-## Pair the episodes, halve the rollouts
+## Pair the episodes when it actually helps
 
-If both policies were evaluated on the *same scenes*, say so and the comparison gets much
-sharper:
+If both policies were evaluated on the *same scenes*, you can compare them episode by episode:
 
 ```bash
 verdikt compare "eval/*.json" --baseline production --paired
 ```
 
-An unpaired test has to work out that A beats B while both are drowning in scene-to-scene
-difficulty. A paired test throws that difficulty away and looks only at the episodes where the
-two arms *disagreed* — so the scenes nobody solves, and the scenes everybody solves, stop
-costing you statistical power.
+A paired test looks only at the episodes where the two arms **disagreed**, so shared
+scene-to-scene difficulty stops costing you power. That is a large win when the policies solve
+many of the same scenes.
+
+**It is not universally better, and Verdikt says so.** McNemar uses only the discordant pairs;
+Fisher uses both full margins. When the two arms share few successes there is nothing for
+pairing to cancel, and the unpaired test is stronger. Measured on 50 real PushT episodes where
+ACT scored 0/50 and diffusion 13/50 — no shared successes at all:
+
+| test | p |
+|---|---:|
+| unpaired (Fisher) | **0.00010** |
+| paired (McNemar) | 0.00024 |
+
+So `--paired` prints a warning when the contingency table shows pairing is unlikely to pay,
+rather than letting you assume it always does.
 
 **Verdikt refuses to pair unless it can justify the alignment.** With a per-episode `seed`
 column it pairs on the seed — including when the two arms recorded the same scenes in a

@@ -4,6 +4,18 @@ All notable changes to Verdikt are recorded here. Versions follow
 [semantic versioning](https://semver.org/); the statistical behaviour of a command is treated
 as part of its public API, so a change that would alter a verdict is a breaking change.
 
+## [0.3.1] — 2026-08-08
+
+### Fixed
+
+- **`--paired` no longer implies that pairing is always stronger.** McNemar spends only the
+  discordant pairs while an unpaired test uses both full margins, so when two arms share few
+  successes there is nothing for pairing to cancel and the unpaired test wins. Measured on 50
+  real PushT episodes (ACT 0/50 vs diffusion 13/50): Fisher p=0.00010, McNemar p=0.00024.
+  Verdikt now reports the unpaired p-value alongside the paired one and prints a `PAIRING`
+  note when the contingency table shows pairing did not pay off. The 0.3.0 README claimed
+  pairing made the comparison "much sharper" unconditionally; that was wrong and is corrected.
+
 ## [0.3.0] — 2026-08-08
 
 ### Added

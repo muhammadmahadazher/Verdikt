@@ -175,3 +175,4 @@ class ComparisonResult(BaseModel):
     required_n: int | None = None
     plan: Plan | None = None
     label_sources: list[str] = []
+    notes: list[str] = []  # advisory remarks, e.g. pairing that did not pay off

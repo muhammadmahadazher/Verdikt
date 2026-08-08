@@ -399,6 +399,11 @@ def _print_text(result, baseline, plan_obj) -> None:
         for line in _wrap(c.message, 84):
             console.print(f"          {line}")
 
+    for note in result.notes:
+        console.print("\n[yellow]PAIRING[/]")
+        for line in _wrap(note, 84):
+            console.print(f"          {line}")
+
     if result.label_sources and result.label_sources != ["simulator"]:
         console.print(f"\n[dim]label sources present: {', '.join(result.label_sources)}[/]")
 

@@ -112,6 +112,31 @@ class TestPairedPower:
         assert result.pairs[0].p_value == pytest.approx(1.0)
         assert result.verdict in (Verdict.UNDERPOWERED, Verdict.BETTER)
 
+    def test_pairing_warns_when_it_does_not_pay(self):
+        """Pairing is not free power, and the tool must not imply that it is.
+
+        Measured on 50 real PushT episodes: ACT 0/50 vs diffusion 13/50 gives Fisher
+        p=0.00010 and McNemar p=0.00024. With no shared successes there is nothing for
+        pairing to cancel, so McNemar - which spends only the discordant pairs - is weaker
+        than a test that uses both full margins.
+        """
+        rollouts = (arm("base", [False] * 50, seeds=list(range(50)))
+                    + arm("cand", [True] * 13 + [False] * 37, seeds=list(range(50))))
+        result = compare(rollouts, "base", correction="none", paired=True)
+        assert result.notes, "a pairing that lost power must be reported, not hidden"
+        assert "share no successful episode" in result.notes[0]
+
+    def test_no_warning_when_pairing_helps(self):
+        rollouts = self._correlated(40)
+        result = compare(rollouts, "base", correction="none", paired=True)
+        assert result.notes == []
+
+    def test_paired_result_carries_the_unpaired_p_for_comparison(self):
+        rollouts = self._correlated(40)
+        pair = compare(rollouts, "base", correction="none", paired=True).pairs[0]
+        assert pair.alt_p_value is not None, \
+            "the reader must be able to see what the unpaired test would have said"
+
     def test_paired_still_reports_unpaired_arm_summaries(self):
         """The table is still per-arm; only the test between them changes."""
         result = compare(self._correlated(40), "base", correction="none", paired=True)

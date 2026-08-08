@@ -223,6 +223,7 @@ def compare(
     # Pass 2: run the tests that survive.
     pairs: list[PairTest] = []
     raw_p: list[tuple[int, float]] = []
+    pairing_notes: list[str] = []
     for a, b in pairs_idx:
         if (a, b) in blocked:
             pairs.append(PairTest(
@@ -232,11 +233,24 @@ def compare(
             continue
         A, B = by_name[a], by_name[b]
         if paired:
-            _both, only_a, only_b, _neither, key_name = pair_outcomes(
+            both_ok, only_a, only_b, _neither, key_name = pair_outcomes(
                 rollouts, a, b, allow_index_pairing=allow_index_pairing)
             p = paired_p(only_a, only_b)
             used_test = f"mcnemar (paired by {key_name}, {only_a + only_b} discordant)"
-            alt, p_alt = None, None
+            # Pairing is not free power. McNemar spends only the discordant pairs, while an
+            # unpaired test uses both full margins, so when the arms share almost no successes
+            # there is nothing for pairing to cancel and the unpaired test is stronger. Report
+            # the unpaired p-value alongside so the reader can see which one paid off, rather
+            # than assuming pairing always does.
+            alt = test
+            p_alt = unpaired_p(A.successes, A.n, B.successes, B.n, test)
+            if both_ok == 0 and p_alt < p:
+                pairing_notes.append(
+                    f"{a} vs {b}: the arms share no successful episode, so pairing had "
+                    f"nothing to cancel - McNemar gives p={p:.4g} where the unpaired "
+                    f"{test} gives p={p_alt:.4g}. pairing pays off when both policies solve "
+                    "many of the same scenes."
+                )
         else:
             p = unpaired_p(A.successes, A.n, B.successes, B.n, test)
             used_test = test
@@ -276,6 +290,7 @@ def compare(
         arms=arms, pairs=pairs, confounds=confounds, verdict=verdict, reason=reason,
         required_n=req_n, plan=plan,
         label_sources=sorted({r.label_source for r in rollouts}),
+        notes=pairing_notes,
     )
 
 
