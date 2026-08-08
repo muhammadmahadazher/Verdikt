@@ -13,7 +13,7 @@ support.
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
 [![Live demo](https://img.shields.io/badge/live_demo-verdikt-58A6FF)](https://relaxed-heliotrope-271cc3.netlify.app)
-[![Tests](https://img.shields.io/badge/tests-159_passing-3FB950)](tests/)
+[![Tests](https://img.shields.io/badge/tests-169_passing-3FB950)](tests/)
 [![codecov](https://codecov.io/gh/muhammadmahadazher/Verdikt/branch/main/graph/badge.svg)](https://codecov.io/gh/muhammadmahadazher/Verdikt)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
@@ -52,7 +52,7 @@ verdikt compare results/*.json --baseline diffusion_50k
 | `verdikt ingest` | Turn any harness's eval output into one canonical table | 0 |
 | `verdikt plan` | How many episodes do I actually need? | 0 |
 | `verdikt manifest` / `diff` | Are these two runs even comparable? | 0 / 3 |
-| `verdikt compare` | Is checkpoint B **really** better than A? | 0 / 1 / 2 / 3 |
+| `verdikt compare` | Is checkpoint B **really** better than A? (paired or unpaired) | 0 / 1 / 2 / 3 |
 | `verdikt watch` | Can I **stop this eval early**? | 0 / 2 |
 | `verdikt report` | Give me something to hand my lead | 0 / 1 / 2 / 3 |
 
@@ -196,6 +196,41 @@ evidence of equivalence*.
 The false-positive rate is verified by simulation as a **release gate**, not a diagnostic —
 20,000 null runs per configuration, across four base rates, two α levels and run lengths up
 to 600. If empirical FPR ever exceeds α, `watch` does not ship.
+
+## Pair the episodes, halve the rollouts
+
+If both policies were evaluated on the *same scenes*, say so and the comparison gets much
+sharper:
+
+```bash
+verdikt compare "eval/*.json" --baseline production --paired
+```
+
+An unpaired test has to work out that A beats B while both are drowning in scene-to-scene
+difficulty. A paired test throws that difficulty away and looks only at the episodes where the
+two arms *disagreed* — so the scenes nobody solves, and the scenes everybody solves, stop
+costing you statistical power.
+
+**Verdikt refuses to pair unless it can justify the alignment.** With a per-episode `seed`
+column it pairs on the seed — including when the two arms recorded the same scenes in a
+different order. Without seeds it stops:
+
+```
+paired comparison needs episodes that are known to be the same scene, and this source
+records no per-episode seed. re-run the evaluation with a fixed --seed and identical
+batch size for both policies, then pass --assume-aligned to confirm you did — verdikt
+will not assume it for you.
+```
+
+Pairing episode 7 of one run against episode 7 of another is meaningless unless they were the
+same scene, and that is the sort of assumption that silently produces a confident wrong answer.
+It stays the caller's statement, never the tool's guess.
+
+**The assumption is measured, not asserted.** Two `lerobot-eval` runs of the same policy at the
+same seed and batch size agree to a median of 5e-4 in per-episode reward — the signature of the
+same scene replayed, since different scenes would differ by O(0.1). Rollouts are *not* bit
+reproducible on GPU, and one episode in fifty diverged badly; that noise is real but does not
+bias McNemar. Full measurement: [docs/pairing_evidence.md](docs/pairing_evidence.md).
 
 ## Gate a merge on evidence, not on a point estimate
 

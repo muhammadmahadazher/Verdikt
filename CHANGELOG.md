@@ -4,6 +4,22 @@ All notable changes to Verdikt are recorded here. Versions follow
 [semantic versioning](https://semver.org/); the statistical behaviour of a command is treated
 as part of its public API, so a change that would alter a verdict is a breaking change.
 
+## [0.3.0] — 2026-08-08
+
+### Added
+
+- **`compare --paired`** — McNemar on episodes that are the same scene in both arms. Pairing
+  discards the scenes nobody solves and the scenes everybody solves, so it separates policies
+  an unpaired test cannot at the same n.
+- **`--assume-aligned`** — required to pair by episode index when the source records no
+  per-episode seed. Verdikt pairs on the seed when one exists (including when the arms logged
+  the same scenes in a different order) and otherwise refuses rather than guessing.
+- **`docs/pairing_evidence.md`** — the measurement behind that assumption. Two `lerobot-eval`
+  runs of the same policy at the same seed and batch size agree to a median of 5e-4 in
+  per-episode reward, which is the signature of the same scene replayed; different scenes
+  would differ by O(0.1). Rollouts are not bit-reproducible on GPU, and one episode in fifty
+  diverged substantially — noise that is real but does not bias McNemar.
+
 ## [0.2.0] — 2026-08-08
 
 Four new dataset rules, bringing `lint` to ten. Each ships with a deliberately-corrupted

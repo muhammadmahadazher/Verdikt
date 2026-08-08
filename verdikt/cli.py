@@ -254,6 +254,12 @@ def plan(p0, mde_arg, budget, power, alpha, test, hypothesis, out, fast):
 @click.option("--interval", "ci_method",
               type=click.Choice(["wilson", "jeffreys", "clopper-pearson"]), default="wilson",
               show_default=True)
+@click.option("--paired", is_flag=True,
+              help="McNemar on episodes that are the same scene in both arms; removes scene "
+                   "difficulty from the comparison and needs far fewer episodes")
+@click.option("--assume-aligned", is_flag=True,
+              help="with --paired, confirm both arms were evaluated over the same scenes when "
+                   "the source records no per-episode seed")
 @click.option("--min-lower-bound", type=float, default=None,
               help="gate on the CI LOWER bound (there is deliberately no --min-success)")
 @click.option("--noninferiority", "noninf", type=float, default=None, metavar="MARGIN",
@@ -263,7 +269,7 @@ def plan(p0, mde_arg, budget, power, alpha, test, hypothesis, out, fast):
 @click.option("--format", "fmt", type=click.Choice(["text", "json", "markdown"]),
               default="text", show_default=True)
 def compare(paths, baseline, adapter, manifests, test, alpha, correction, ci_method,
-            min_lower_bound, noninf, plan_path, fmt):
+            paired, assume_aligned, min_lower_bound, noninf, plan_path, fmt):
     """Is checkpoint B actually better than A - or did you just not run enough episodes?"""
     rollouts = _load(paths, adapter, None)
 
@@ -284,12 +290,23 @@ def compare(paths, baseline, adapter, manifests, test, alpha, correction, ci_met
             )
         test, alpha = plan_obj.test, plan_obj.alpha
 
-    result = run_compare(
-        rollouts, baseline, manifests=mans, test=test, alpha=alpha,
-        correction=("none" if correction == "none" else correction),
-        ci_method=ci_method, min_lower_bound=min_lower_bound,
-        noninferiority_margin=noninf, plan=plan_obj,
-    )
+    from .compare import PairingError
+
+    try:
+        result = run_compare(
+            rollouts, baseline, manifests=mans, test=test, alpha=alpha,
+            correction=("none" if correction == "none" else correction),
+            ci_method=ci_method, min_lower_bound=min_lower_bound,
+            noninferiority_margin=noninf, plan=plan_obj,
+            paired=paired, allow_index_pairing=assume_aligned,
+        )
+    except PairingError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if paired and assume_aligned and fmt == "text":
+        console.print("\n[yellow]assumed[/] episodes with the same index are the same scene. "
+                      "that holds only if\n        both evaluations ran with the same --seed "
+                      "AND the same batch size.")
 
     if fmt == "json":
         click.echo(result.model_dump_json(indent=2))

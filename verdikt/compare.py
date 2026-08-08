@@ -31,6 +31,7 @@ from .stats import (
     interval,
     one_sided_lower,
     one_sided_upper,
+    paired_p,
     prob_a_beats_b,
     required_n,
     unpaired_p,
@@ -81,6 +82,60 @@ def summarise(rollouts: list[Rollout], ci_method: str = "wilson",
     return arms
 
 
+class PairingError(ValueError):
+    """Raised when a paired comparison is requested but the episodes cannot be aligned."""
+
+
+def pair_outcomes(rollouts: list[Rollout], a: str, b: str,
+                  allow_index_pairing: bool = False) -> tuple[int, int, int, int, str]:
+    """Align two arms episode-by-episode. Returns (both, only_a, only_b, neither, key).
+
+    Pairing is what buys power: it removes scene difficulty from the comparison, so two
+    policies that both fail the hard scenes and differ only on the easy ones are separated
+    with far fewer episodes than an unpaired test needs.
+
+    It is also the easiest thing in this tool to get silently wrong. Pairing episode 7 of one
+    run against episode 7 of another is only meaningful if those two episodes were the *same
+    scene*. When the harness records a per-episode seed we can verify that. When it does not -
+    and `lerobot-eval` does not - the alignment rests on an assumption about how the runs were
+    launched, so the caller has to state it explicitly rather than have it assumed for them.
+    """
+    by_arm: dict[str, dict] = {a: {}, b: {}}
+    for r in rollouts:
+        if r.policy_id in by_arm and r.success is not None:
+            key = r.seed if r.seed is not None else r.episode_idx
+            by_arm[r.policy_id][key] = bool(r.success)
+
+    seeded = all(r.seed is not None for r in rollouts
+                 if r.policy_id in by_arm and r.success is not None)
+    key_name = "seed" if seeded else "episode index"
+
+    if not seeded and not allow_index_pairing:
+        raise PairingError(
+            "paired comparison needs episodes that are known to be the same scene, and this "
+            "source records no per-episode seed. re-run the evaluation with a fixed --seed "
+            "and identical batch size for both policies, then pass --assume-aligned to "
+            "confirm you did - verdikt will not assume it for you."
+        )
+
+    shared = sorted(set(by_arm[a]) & set(by_arm[b]))
+    if not shared:
+        raise PairingError(f"no episodes are shared between {a} and {b} by {key_name}")
+    missing = (len(by_arm[a]) - len(shared)) + (len(by_arm[b]) - len(shared))
+    if missing > 0.1 * (len(by_arm[a]) + len(by_arm[b])):
+        raise PairingError(
+            f"{a} and {b} share only {len(shared)} episodes by {key_name} "
+            f"({len(by_arm[a])} vs {len(by_arm[b])} recorded); they were not run over the "
+            "same set of scenes, so pairing them would compare different problems"
+        )
+
+    both = sum(by_arm[a][k] and by_arm[b][k] for k in shared)
+    only_a = sum(by_arm[a][k] and not by_arm[b][k] for k in shared)
+    only_b = sum(by_arm[b][k] and not by_arm[a][k] for k in shared)
+    neither = len(shared) - both - only_a - only_b
+    return both, only_a, only_b, neither, key_name
+
+
 def find_confounds(manifests: dict[str, RunManifest], a: str, b: str) -> list[Confound]:
     """Reasons two arms must not be ranked. Arithmetic, not inference - and the strongest
     opinion in the tool."""
@@ -129,6 +184,8 @@ def compare(
     plan: Plan | None = None,
     power_target: float = 0.80,
     practical_difference: float = PRACTICAL_DIFFERENCE,
+    paired: bool = False,
+    allow_index_pairing: bool = False,
 ) -> ComparisonResult:
     """Compare policy arms and issue one verdict."""
     manifests = manifests or {}
@@ -174,12 +231,20 @@ def compare(
             ))
             continue
         A, B = by_name[a], by_name[b]
-        p = unpaired_p(A.successes, A.n, B.successes, B.n, test)
-        alt = "barnard" if test == "fisher" else "fisher"
-        p_alt = unpaired_p(A.successes, A.n, B.successes, B.n, alt)
+        if paired:
+            _both, only_a, only_b, _neither, key_name = pair_outcomes(
+                rollouts, a, b, allow_index_pairing=allow_index_pairing)
+            p = paired_p(only_a, only_b)
+            used_test = f"mcnemar (paired by {key_name}, {only_a + only_b} discordant)"
+            alt, p_alt = None, None
+        else:
+            p = unpaired_p(A.successes, A.n, B.successes, B.n, test)
+            used_test = test
+            alt = "barnard" if test == "fisher" else "fisher"
+            p_alt = unpaired_p(A.successes, A.n, B.successes, B.n, alt)
         idx = len(pairs)
         pairs.append(PairTest(
-            a=a, b=b, test=test, p_value=p, alpha_adjusted=alpha_adj,
+            a=a, b=b, test=used_test, p_value=p, alpha_adjusted=alpha_adj,
             significant=p <= alpha_adj, alt_test=alt, alt_p_value=p_alt,
         ))
         raw_p.append((idx, p))
