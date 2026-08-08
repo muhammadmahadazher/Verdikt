@@ -22,7 +22,17 @@ def wilson(k: int, n: int, conf: float = 0.95) -> tuple[float, float]:
     denom = 1 + z * z / n
     centre = (p + z * z / (2 * n)) / denom
     half = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5) / denom
-    return (max(0.0, centre - half), min(1.0, centre + half))
+    return (_snap(max(0.0, centre - half)), 1.0 - _snap(1.0 - min(1.0, centre + half)))
+
+
+def _snap(x: float, eps: float = 1e-12) -> float:
+    """Collapse floating-point dust to exactly zero.
+
+    At k=0 the Wilson lower bound is zero in exact arithmetic but lands on ~1.7e-18 in
+    floating point. That is harmless in a calculation and absurd in a dashboard or a report,
+    where it renders as a non-zero bound.
+    """
+    return 0.0 if abs(x) < eps else x
 
 
 def jeffreys(k: int, n: int, conf: float = 0.95) -> tuple[float, float]:

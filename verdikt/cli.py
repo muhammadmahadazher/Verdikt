@@ -640,7 +640,12 @@ def watch(paths, adapter, alpha, partial, replay, trials):
 @click.option("--modelcard", type=click.Path(), default=None,
               help="also write a LeRobot-format model card")
 @click.option("--task", default="unknown", help="task name for the model card")
-def report(paths, baseline, adapter, manifests, dataset, test, alpha, out, modelcard, task):
+@click.option("--wandb", "wandb_run", default=None, metavar="ENTITY/PROJECT/RUN_ID",
+              help="attach the verdict, arm table and report to an existing W&B run")
+@click.option("--wandb-dry-run", is_flag=True,
+              help="print exactly what would be sent to W&B, and send nothing")
+def report(paths, baseline, adapter, manifests, dataset, test, alpha, out, modelcard, task,
+           wandb_run, wandb_dry_run):
     """One self-contained HTML file you can hand to your lead, plus a model card."""
     from .lint import run_all as lint_all
     from .report import render_html, render_model_card
@@ -668,6 +673,34 @@ def report(paths, baseline, adapter, manifests, dataset, test, alpha, out, model
                               eval_command=f"verdikt compare {' '.join(paths)}"),
             encoding="utf-8")
         console.print(f"[green]wrote[/] {modelcard}")
+
+    if wandb_run or wandb_dry_run:
+        from .integrations.wandb import build_payload, build_table_rows, parse_run_path
+
+        payload = build_payload(result, baseline, posteriors)
+        if wandb_dry_run:
+            target = wandb_run or "<no run given>"
+            console.print(f"\n[bold]W&B dry run[/] [dim]-> {target}[/]")
+            console.print(f"[dim]{len(payload)} summary keys, "
+                          f"{len(build_table_rows(result)[1])} table rows, "
+                          f"{'report + ' if out else ''}"
+                          f"{'model card' if modelcard else 'no model card'} as artifact[/]")
+            for k, v in sorted(payload.items()):
+                console.print(f"  [cyan]{k}[/] = {v}")
+        else:
+            try:
+                parse_run_path(wandb_run)
+            except ValueError as exc:
+                raise click.ClickException(str(exc)) from exc
+            from .integrations.wandb import push
+
+            try:
+                push(result, wandb_run, baseline=baseline, posteriors=posteriors,
+                     html_report=out, model_card=modelcard)
+            except RuntimeError as exc:
+                raise click.ClickException(str(exc)) from exc
+            console.print(f"[green]pushed to W&B[/] {wandb_run}  [dim]{len(payload)} summary "
+                          "keys + arm table + report artifact[/]")
 
     _echo_verdict(result.verdict, result.reason)
     raise SystemExit(int(result.verdict))

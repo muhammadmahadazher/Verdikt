@@ -12,7 +12,8 @@ support.
 [![Python](https://img.shields.io/badge/python-3.10+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache_2.0-green)](LICENSE)
 [![No GPU](https://img.shields.io/badge/GPU-not_required-76B900?logo=nvidia&logoColor=white)](#)
-[![Tests](https://img.shields.io/badge/tests-114_passing-3FB950)](tests/)
+[![Live demo](https://img.shields.io/badge/live_demo-verdikt-58A6FF)](https://relaxed-heliotrope-271cc3.netlify.app)
+[![Tests](https://img.shields.io/badge/tests-141_passing-3FB950)](tests/)
 [![codecov](https://codecov.io/gh/muhammadmahadazher/Verdikt/branch/main/graph/badge.svg)](https://codecov.io/gh/muhammadmahadazher/Verdikt)
 [![Works with](https://img.shields.io/badge/works_with-LeRobot-FF9D00)](https://github.com/huggingface/lerobot)
 
@@ -235,6 +236,22 @@ Three scenarios run against the committed corpus on every push
 ([gate-selftest.yml](.github/workflows/gate-selftest.yml)) — a genuine improvement passes, a
 real regression is caught, and the canonical 35%-vs-70%-at-n=20 case warns rather than blocks.
 
+## Put the verdict where your team already looks
+
+```bash
+verdikt report "eval/*.json" --baseline production \
+  -o report.html --modelcard MODEL_CARD.md \
+  --wandb acme/robot-policies/3kf9a2xq
+```
+
+W&B stores and plots your numbers; it has no opinion about whether a difference is real.
+This attaches the opinion to the run: verdict and exit code as summary fields, an arm table,
+and the HTML report plus model card as a versioned artifact.
+
+Every rate written to W&B carries its `n` and both interval bounds, and a `0/n` arm carries
+its one-sided bound rather than a hard zero — because once a bare number is on a dashboard it
+ends up in a slide deck. Use `--wandb-dry-run` to see the exact payload before sending it.
+
 ## Structural refusals
 
 These are enforced in the formatter, not left to the caller's discipline. They cannot be
@@ -385,8 +402,8 @@ Scope discipline is a feature. Verdikt will never:
 | ✅ | `lint` — six dataset rules, each with a deliberately-corrupted test fixture |
 | ✅ | `report` — self-contained HTML + LeRobot-format model card |
 | ✅ | `watch` — anytime-valid sequential stopping, past its 20,000-run false-positive gate |
-| 🔜 | `gate` — GitHub Action wrapping the four-state exit code |
-| 🔜 | W&B write-back |
+| ✅ | `gate` — GitHub Action wrapping the four-state exit code, dogfooded in CI |
+| ✅ | W&B write-back |
 | 🔬 | `profile` — dataset multimodality bound, `--experimental` only, gated on a published calibration experiment |
 
 ---
