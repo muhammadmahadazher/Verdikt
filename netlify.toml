@@ -11,6 +11,11 @@
   command = "pip install -e . && python docs/build_site.py"
   publish = "site"
 
+  # Only rebuild when something that can actually change the site changed. Most commits here
+  # touch tests, the changelog or the README, none of which the site is built from - and every
+  # needless build spends the team's credit allowance. The command exits 0 to SKIP.
+  ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF -- verdikt/ docs/build_site.py docs/*.png tests/fixtures/pusht_n200/ netlify.toml"
+
 [build.environment]
   PYTHON_VERSION = "3.12"
 
