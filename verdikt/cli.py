@@ -34,8 +34,19 @@ def _echo_verdict(code: Verdict, reason: str) -> None:
     name, _hex, style = VERDICT[int(code)]
     console.print()
     console.print(f"[{style}]VERDICT   {name}[/]")
-    for line in _wrap(reason, 88):
+    for line in _wrap(reason, _body_width(10, 88)):
         console.print(f"          [dim]{line}[/]")
+
+
+def _body_width(indent: int = 10, preferred: int = 84) -> int:
+    """Wrap width that survives a narrow terminal or a pipe.
+
+    Every wrapped block here is printed under a fixed indent. Wrapping to a width the console
+    cannot fit means rich wraps the result a second time, and the reader gets a paragraph
+    broken mid-clause at two different widths. Redirected output reports 80 columns, which is
+    exactly where CI logs and `| tee` land.
+    """
+    return max(40, min(preferred, console.width - indent - 2))
 
 
 def _wrap(text: str, width: int) -> list[str]:
@@ -260,6 +271,9 @@ def plan(p0, mde_arg, budget, power, alpha, test, hypothesis, out, fast):
 @click.option("--assume-aligned", is_flag=True,
               help="with --paired, confirm both arms were evaluated over the same scenes when "
                    "the source records no per-episode seed")
+@click.option("--by-task", "by_task", is_flag=True,
+              help="show the per-task breakdown and the stratified test. the pooled/per-task "
+                   "contradiction check runs either way; this only prints the table")
 @click.option("--min-lower-bound", type=float, default=None,
               help="gate on the CI LOWER bound (there is deliberately no --min-success)")
 @click.option("--noninferiority", "noninf", type=float, default=None, metavar="MARGIN",
@@ -269,7 +283,7 @@ def plan(p0, mde_arg, budget, power, alpha, test, hypothesis, out, fast):
 @click.option("--format", "fmt", type=click.Choice(["text", "json", "markdown"]),
               default="text", show_default=True)
 def compare(paths, baseline, adapter, manifests, test, alpha, correction, ci_method,
-            paired, assume_aligned, min_lower_bound, noninf, plan_path, fmt):
+            paired, assume_aligned, by_task, min_lower_bound, noninf, plan_path, fmt):
     """Is checkpoint B actually better than A - or did you just not run enough episodes?"""
     rollouts = _load(paths, adapter, None)
 
@@ -315,11 +329,56 @@ def compare(paths, baseline, adapter, manifests, test, alpha, correction, ci_met
         _print_markdown(result, baseline)
         raise SystemExit(int(result.verdict))
 
-    _print_text(result, baseline, plan_obj)
+    _print_text(result, baseline, plan_obj, by_task=by_task)
     raise SystemExit(int(result.verdict))
 
 
-def _print_text(result, baseline, plan_obj) -> None:
+def _print_by_task(result) -> None:
+    """The per-task table. Printed on request, and unconditionally when it contradicts."""
+    for s in result.by_task:
+        if not s.rows:
+            continue
+        console.print(f"\n[bold]by task[/]  {s.a} vs {s.b}")
+        width = max(len("pooled"), *(len(r.task) for r in s.rows))
+        console.print(f"  {'task'.ljust(width)}  {s.a:>18s}  {s.b:>18s}    delta")
+        # One decimal on every rate. At zero the fixture that motivated this module prints
+        # 70% vs 69% - which reads as a tie and hides that the candidate is the worse of the
+        # two on that task, the very fact the pooled number is contradicting.
+        for r in s.rows:
+            a_rate = r.a_successes / r.a_n if r.a_n else float("nan")
+            b_rate = r.b_successes / r.b_n if r.b_n else float("nan")
+            delta = a_rate - b_rate
+            colour = "green" if delta > 0 else ("red" if delta < 0 else "dim")
+            console.print(
+                f"  {r.task.ljust(width)}  "
+                f"{f'{r.a_successes}/{r.a_n} ({a_rate:.1%})':>18s}  "
+                f"{f'{r.b_successes}/{r.b_n} ({b_rate:.1%})':>18s}   "
+                f"[{colour}]{delta:+6.1%}[/]"
+            )
+        style = "red" if s.simpson_reversal else "dim"
+        # When coverage differs, this row pools the shared tasks only and will not match the
+        # headline table. Saying which is being shown costs one word and avoids the reader
+        # concluding one of the two tables is wrong.
+        label = "pooled*" if (s.a_unmatched or s.b_unmatched) else "pooled"
+        console.print(
+            f"[{style}]  {label.ljust(width)}  {s.pooled_a_rate:>18.1%}  "
+            f"{s.pooled_b_rate:>18.1%}   {s.pooled_a_rate - s.pooled_b_rate:+6.1%}[/]"
+        )
+        if s.a_unmatched or s.b_unmatched:
+            console.print(f"  [dim]* shared tasks only; {s.a_unmatched} {s.a} and "
+                          f"{s.b_unmatched} {s.b} episodes ran on tasks the other did not, "
+                          f"and are excluded here.[/]")
+
+        odds = f"{s.common_odds_ratio:.3f}" if s.common_odds_ratio is not None else "n/a"
+        console.print(f"\n  stratified (Cochran-Mantel-Haenszel)  p={s.cmh_p:.4g}  "
+                      f"odds ratio {odds}")
+        if s.homogeneity_testable:
+            console.print(f"  same effect on every task (Breslow-Day) p={s.homogeneity_p:.4g}")
+        else:
+            console.print("  same effect on every task              [dim]untestable[/]")
+
+
+def _print_text(result, baseline, plan_obj, by_task: bool = False) -> None:
     table = Table(box=None, pad_edge=False, header_style="bold")
     table.add_column("policy")
     table.add_column("n", justify="right")
@@ -367,8 +426,13 @@ def _print_text(result, baseline, plan_obj) -> None:
     shown = [p for p in result.pairs]
     if shown:
         m = len([p for p in shown if p.suppressed_reason is None])
-        console.print(f"\n[bold]pairwise[/] [dim](test={shown[0].test}, "
-                      f"m={m}, corrected alpha={shown[0].alpha_adjusted:.5f})[/]")
+        if m:
+            console.print(f"\n[bold]pairwise[/] [dim](test={shown[0].test}, "
+                          f"m={m}, corrected alpha={shown[0].alpha_adjusted:.5f})[/]")
+        else:
+            # Printing a corrected alpha next to m=0 invites the reader to check a p-value
+            # against it. There is no p-value: nothing was tested.
+            console.print("\n[bold]pairwise[/] [dim](no comparison was testable)[/]")
         for p in shown:
             if p.suppressed_reason:
                 console.print(f"  {p.a} vs {p.b}   [magenta]SUPPRESSED[/] [dim](confounded)[/]")
@@ -383,11 +447,17 @@ def _print_text(result, baseline, plan_obj) -> None:
             console.print(line)
 
     if baseline:
-        post = posterior_table(result.arms, baseline)
+        post = posterior_table(result.arms, baseline, result.pairs)
         if post:
             console.print("\n[bold]posterior[/] [dim](uniform prior)[/]")
             for pid, prob in post.items():
                 console.print(f"  P({pid} > {baseline}) = {prob:.3f}")
+
+    # Shown on request - and forced when a pair was suppressed for a task-mix reversal, since
+    # the breakdown is the evidence for that refusal and hiding it behind a flag would leave
+    # the reader with a verdict and no way to see why.
+    if by_task or any(s.simpson_reversal for s in result.by_task):
+        _print_by_task(result)
 
     seen = set()
     for c in result.confounds:
@@ -396,12 +466,12 @@ def _print_text(result, baseline, plan_obj) -> None:
             continue
         seen.add(key)
         console.print(f"\n[magenta]CONFOUND[/]  [dim]{c.kind}[/]")
-        for line in _wrap(c.message, 84):
+        for line in _wrap(c.message, _body_width()):
             console.print(f"          {line}")
 
     for note in result.notes:
         console.print("\n[yellow]PAIRING[/]")
-        for line in _wrap(note, 84):
+        for line in _wrap(note, _body_width()):
             console.print(f"          {line}")
 
     if result.label_sources and result.label_sources != ["simulator"]:
@@ -427,7 +497,7 @@ def doctor(train_config, dataset_meta, fail_on):
     icon = {"error": "[red]ERROR  [/]", "warning": "[yellow]WARN   [/]", "info": "[dim]ok     [/]"}
     for f in findings:
         console.print(f"{icon[f.severity]} [bold]{f.rule_id}[/]  {f.message}")
-        for line in _wrap(f.detail, 78):
+        for line in _wrap(f.detail, _body_width(10, 78)):
             console.print(f"          [dim]{line}[/]")
         if f.fix:
             console.print(f"          [cyan]fix:[/] {f.fix}")
@@ -476,7 +546,7 @@ def lint(dataset, train_config, fmt, fail_on):
         icon = {"error": "[red]ERROR[/]", "warning": "[yellow]WARN [/]", "info": "[dim]ok   [/]"}
         for f in findings:
             console.print(f"{icon[f.severity]} [bold]{f.rule_id}[/]  {f.message}")
-            for line in _wrap(f.detail, 76):
+            for line in _wrap(f.detail, _body_width(8, 76)):
                 console.print(f"        [dim]{line}[/]")
             if f.fix:
                 console.print(f"        [cyan]fix:[/] {f.fix}")
@@ -588,7 +658,7 @@ def profile(dataset, experimental, k, block_radius, sample, permutations):
 
     style = "yellow" if verdict == "INSUFFICIENT EVIDENCE" else "cyan"
     console.print(f"\n[{style}]{verdict}[/]")
-    for line in _wrap(explanation, 84):
+    for line in _wrap(explanation, _body_width(2, 84)):
         console.print(f"  [dim]{line}[/]")
     console.print("\n[dim]\\[provisional] this metric is not calibrated against downstream "
                   "policy success. it is a bound under the embeddings shown, nothing more.[/]")
@@ -779,7 +849,7 @@ def report(paths, baseline, adapter, manifests, dataset, test, alpha, out, model
             mans[m.policy_id] = m
 
     result = run_compare(rollouts, baseline, manifests=mans, test=test, alpha=alpha)
-    posteriors = posterior_table(result.arms, baseline) if baseline else {}
+    posteriors = posterior_table(result.arms, baseline, result.pairs) if baseline else {}
     findings = lint_all(dataset) if dataset else []
 
     Path(out).parent.mkdir(parents=True, exist_ok=True)

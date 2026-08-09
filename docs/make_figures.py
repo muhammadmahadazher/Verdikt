@@ -248,8 +248,80 @@ def fig_n_matters() -> None:
     print("wrote docs/n_matters.png")
 
 
+# --------------------------------------------------------------- figure 5
+def fig_simpson() -> None:
+    """A pooled win that no task supports.
+
+    Every number here comes from the same code path `verdikt compare` uses, including the
+    stratified p-value - so the figure cannot drift away from what the tool actually says.
+    """
+    from verdikt.compare import compare
+    from verdikt.schema import Rollout
+
+    cells = [("pick_bowl", "act_v1", 14, 20), ("pick_bowl", "act_v2", 55, 80),
+             ("stack_blocks", "act_v1", 16, 80), ("stack_blocks", "act_v2", 4, 20)]
+    rollouts = [
+        Rollout(run_id=f"{p}-{t}", policy_id=p, task=t, episode_idx=i, success=i < k)
+        for t, p, k, n in cells for i in range(n)
+    ]
+    result = compare(rollouts, "act_v1")
+    summary = result.by_task[0]
+    tasks = [r.task for r in summary.rows]
+
+    fig, axes = plt.subplots(1, 2, figsize=(13, 4.8),
+                             gridspec_kw={"width_ratios": [1.35, 1]})
+
+    # left: per task, side by side, with the episode count that does the damage
+    ax = axes[0]
+    x = np.arange(len(tasks))
+    width = 0.36
+    a_rates = [r.a_successes / r.a_n for r in summary.rows]
+    b_rates = [r.b_successes / r.b_n for r in summary.rows]
+    ax.bar(x - width / 2, [r * 100 for r in a_rates], width, color=theme.ACCENT,
+           label=summary.a)
+    ax.bar(x + width / 2, [r * 100 for r in b_rates], width, color=theme.SERIES[1],
+           label=summary.b)
+    for xi, r in zip(x, summary.rows, strict=True):
+        ax.text(xi - width / 2, r.a_successes / r.a_n * 100 + 2, f"n={r.a_n}",
+                ha="center", color=theme.TEXT_FAINT, fontsize=9)
+        ax.text(xi + width / 2, r.b_successes / r.b_n * 100 + 2, f"n={r.b_n}",
+                ha="center", color=theme.TEXT_FAINT, fontsize=9)
+    ax.set_xticks(x, tasks)
+    ax.set_ylabel("success rate (%)")
+    ax.set_ylim(0, 88)
+    ax.set_title("per task: the candidate never wins", loc="left")
+    ax.legend(loc="upper right")
+
+    # right: the pooled bars, which say the opposite
+    ax = axes[1]
+    pooled = [summary.pooled_a_rate * 100, summary.pooled_b_rate * 100]
+    bars = ax.bar([0, 1], pooled, 0.5, color=[theme.ACCENT, theme.SERIES[1]])
+    for bar, val in zip(bars, pooled, strict=True):
+        ax.text(bar.get_x() + bar.get_width() / 2, val + 1.5, f"{val:.0f}%",
+                ha="center", color=theme.TEXT, fontsize=11)
+    ax.annotate("", xy=(0.86, pooled[1] - 4), xytext=(0.16, pooled[0] + 6),
+                arrowprops={"arrowstyle": "->", "color": theme.BAD, "lw": 1.6})
+    ax.text(0.5, (pooled[0] + pooled[1]) / 2 + 8,
+            f"+{pooled[1] - pooled[0]:.0f} points\nout of nowhere",
+            ha="center", color=theme.BAD, fontsize=10)
+    ax.set_xticks([0, 1], [summary.a, summary.b])
+    ax.set_ylabel("pooled success rate (%)")
+    ax.set_ylim(0, 88)
+    ax.set_title("pooled: a 29-point 'win'", loc="left")
+
+    verdict_name = theme.VERDICT[int(result.verdict)][0]
+    fig.suptitle(
+        f"Simpson's paradox on a two-task suite  -  stratified p={summary.cmh_p:.3f}, "
+        f"odds ratio {summary.common_odds_ratio:.2f}  ->  Verdikt says {verdict_name}",
+        x=0.008, ha="left", color=theme.TEXT_DIM, fontsize=11)
+    fig.tight_layout()
+    fig.savefig(DOCS / "simpson.png", dpi=150)
+    print("wrote docs/simpson.png")
+
+
 if __name__ == "__main__":
     fig_power()
     fig_audit()
     fig_workflow()
     fig_n_matters()
+    fig_simpson()

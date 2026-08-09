@@ -4,6 +4,51 @@ All notable changes to Verdikt are recorded here. Versions follow
 [semantic versioning](https://semver.org/); the statistical behaviour of a command is treated
 as part of its public API, so a change that would alter a verdict is a breaking change.
 
+## [0.4.0] — 2026-08-09
+
+Multi-task evaluation. A suite of tasks is not one number, and pooling one can reverse the
+answer.
+
+### Added
+
+- **Per-task comparison, always on.** Any run spanning more than one task is now compared
+  within each task as well as pooled. There is no flag to enable this; `--by-task` only
+  controls whether the breakdown prints. A check the caller has to remember is not a check.
+- **Cochran-Mantel-Haenszel** to combine per-task comparisons without letting the number of
+  episodes each task received leak into the result, and **Breslow-Day** to test first whether
+  the effect is even the same across tasks. Both agree with statsmodels 0.14.6 to 1e-6 across
+  seven configurations (`docs/crosscheck_stratified.py`). Where statsmodels returns NaN — it
+  divides by (OR − 1), so a common odds ratio of exactly 1 is undefined for it — the expected
+  values are derived by hand in the tests that pin them.
+- **`compare --by-task`** prints the per-task table, the stratified test and the homogeneity
+  test. It is printed unconditionally when a contradiction was found, since the breakdown is
+  the evidence for the refusal.
+
+### Changed
+
+- **A pooled result that no task supports is now `NOT COMPARABLE`.** On a two-task suite where
+  the arms received different episode counts, one policy can lead the pooled rate by 29 points
+  while tying one task and losing the other. That pair is suppressed rather than ranked,
+  exactly as a compute or data confound is. This changes verdicts on multi-task inputs, hence
+  the minor bump.
+- **Task coverage gaps are reported.** Episodes run on a task the other arm never attempted
+  have nothing to pair against and no stratified test can repair them. Above 5% of an arm's
+  episodes this suppresses the comparison; below it, a stray crashed episode is tolerated.
+- Degrees of freedom for Breslow-Day count only tasks that carry information. Padding a suite
+  with tasks nobody solved would otherwise make it look progressively more homogeneous.
+- Wrapped output now adapts to the terminal width. At 80 columns — where redirected output and
+  CI logs land — long confound messages were being wrapped twice and broken mid-clause.
+
+### Fixed
+
+- **The Bayesian posterior no longer contradicts a `NOT COMPARABLE` verdict.** Up to and
+  including 0.3.1, a suppressed pair still printed `P(b > a) = 1.000` directly beneath the
+  refusal to rank it — the exact conclusion the verdict withheld, in the most quotable form on
+  the page. It is now withheld for suppressed pairs specifically; unconfounded arms in the same
+  run keep theirs. Affects `compare`, `report` and the demo site.
+- `pairwise` no longer prints a corrected alpha when no comparison was testable; `m=0` beside a
+  threshold invited checking a p-value that does not exist.
+
 ## [0.3.1] — 2026-08-08
 
 ### Fixed

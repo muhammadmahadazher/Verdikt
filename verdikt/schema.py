@@ -96,8 +96,38 @@ class Confound(BaseModel):
     a_value: str
     b_value: str
     ratio: float | None = None
-    kind: Literal["EXPECTED", "CAUSE", "COMPUTE_CONFOUND", "DATA_CONFOUND"]
+    kind: Literal["EXPECTED", "CAUSE", "COMPUTE_CONFOUND", "DATA_CONFOUND", "TASK_MIX_CONFOUND"]
     message: str
+
+
+class TaskRow(BaseModel):
+    """One task's contribution to a two-arm comparison."""
+
+    task: str
+    a_successes: int
+    a_n: int
+    b_successes: int
+    b_n: int
+
+
+class StratifiedSummary(BaseModel):
+    """A two-arm comparison broken out by task and recombined without pooling bias."""
+
+    a: str
+    b: str
+    rows: list[TaskRow]
+    cmh_p: float
+    common_odds_ratio: float | None = None
+    homogeneity_p: float
+    homogeneity_testable: bool
+    pooled_a_rate: float
+    pooled_b_rate: float
+    simpson_reversal: bool
+    notes: list[str] = []
+    # Episodes on tasks the other arm never ran. When either is non-zero the pooled row of
+    # this breakdown covers only the shared tasks and will not match the headline table.
+    a_unmatched: int = 0
+    b_unmatched: int = 0
 
 
 class Plan(BaseModel):
@@ -176,3 +206,4 @@ class ComparisonResult(BaseModel):
     plan: Plan | None = None
     label_sources: list[str] = []
     notes: list[str] = []  # advisory remarks, e.g. pairing that did not pay off
+    by_task: list[StratifiedSummary] = []  # populated whenever the run spans >1 task

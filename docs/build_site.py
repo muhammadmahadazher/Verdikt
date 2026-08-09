@@ -244,7 +244,7 @@ def main() -> None:
     result = compare(rollouts, "diffusion")
     (SITE / "report.html").write_text(
         render_html(result, baseline="diffusion",
-                    posteriors=posterior_table(result.arms, "diffusion")),
+                    posteriors=posterior_table(result.arms, "diffusion", result.pairs)),
         encoding="utf-8")
 
     budget_rows = [(n, mde(n, 0.35, 0.80, 0.05, "fisher")) for n in (20, 50, 100, 200)]

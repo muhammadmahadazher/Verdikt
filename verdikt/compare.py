@@ -12,6 +12,7 @@ whole point of the tool is that they cannot be forgotten:
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 
 from .schema import (
@@ -22,6 +23,8 @@ from .schema import (
     Plan,
     Rollout,
     RunManifest,
+    StratifiedSummary,
+    TaskRow,
     Verdict,
 )
 from .stats import (
@@ -37,9 +40,15 @@ from .stats import (
     unpaired_p,
 )
 from .stats.power import mde as mde_fn
+from .stratified import analyse, coverage_gap, strata_from_rollouts
 
 # how far apart training budgets may be before ranking is refused
 SAMPLES_SEEN_RATIO_LIMIT = 2.0
+
+# Fraction of an arm's episodes that may sit on tasks the other arm never ran before the
+# headline rates stop being comparable. A crashed episode or two is tolerable; a whole task
+# is not.
+UNSHARED_TASK_LIMIT = 0.05
 
 # The smallest difference a reader would act on. A non-significant result only means
 # "no difference" if the design could have resolved at least this much; otherwise the honest
@@ -216,6 +225,17 @@ def compare(
         if blocking:
             blocked[(a, b)] = blocking[0].message
 
+    # A run that spans several tasks is compared per task as well as pooled. This is not
+    # optional and there is no flag for it: when the arms were evaluated on different mixes of
+    # tasks, the pooled success rate can favour a policy that lost every single task, and a
+    # check the caller has to remember to switch on is not a check. Where that reversal is
+    # found the pair is suppressed exactly as a compute or data confound would be - the two
+    # numbers are not comparable, so they are not ranked.
+    by_task, task_blocks = _stratify_pairs(rollouts, pairs_idx)
+    confounds.extend(task_blocks.values())
+    for pair, confound in task_blocks.items():
+        blocked.setdefault(pair, confound.message)
+
     live = [pair for pair in pairs_idx if pair not in blocked]
     m_tests = max(1, len(live))
     alpha_adj = bonferroni(alpha, m_tests) if correction == "bonferroni" else alpha
@@ -290,8 +310,82 @@ def compare(
         arms=arms, pairs=pairs, confounds=confounds, verdict=verdict, reason=reason,
         required_n=req_n, plan=plan,
         label_sources=sorted({r.label_source for r in rollouts}),
-        notes=pairing_notes,
+        notes=pairing_notes, by_task=by_task,
     )
+
+
+def _stratify_pairs(
+    rollouts: list[Rollout], pairs_idx: list[tuple[str, str]]
+) -> tuple[list[StratifiedSummary], dict[tuple[str, str], Confound]]:
+    """Per-task breakdown for every pair, plus the pairs whose pooled rate cannot be trusted.
+
+    Silent on a single-task run: stratifying one stratum is just the pooled comparison with
+    extra words.
+    """
+    tasks = {r.task for r in rollouts if r.success is not None}
+    if len(tasks) < 2:
+        return [], {}
+
+    summaries: list[StratifiedSummary] = []
+    blocks: dict[tuple[str, str], Confound] = {}
+    for a, b in pairs_idx:
+        cells = strata_from_rollouts(rollouts, a, b)
+        a_only, b_only, unshared = coverage_gap(cells)
+        if not [s for s in cells if s.usable]:
+            # The arms share no task at all. Their success rates are averages over different
+            # problems and there is nothing to stratify.
+            blocks[(a, b)] = Confound(
+                field="task coverage", kind="TASK_MIX_CONFOUND",
+                a_value=f"{a_only} episodes", b_value=f"{b_only} episodes",
+                message=(f"{a} and {b} share no task. their success rates average over "
+                         f"different problems, so the two numbers are not measurements of "
+                         f"the same thing. tasks: {', '.join(unshared[:6])}."),
+            )
+            continue
+        analysis = analyse(cells)
+
+        # Episodes spent where the other arm never went. Below a few percent this is a
+        # crashed episode or two and the comparison survives it; above that the headline
+        # rates are averages over materially different task sets.
+        a_total = sum(s.a_n for s in cells) or 1
+        b_total = sum(s.b_n for s in cells) or 1
+        gap = max(a_only / a_total, b_only / b_total)
+        if gap > UNSHARED_TASK_LIMIT:
+            blocks.setdefault((a, b), Confound(
+                field="task coverage", kind="TASK_MIX_CONFOUND",
+                a_value=f"{a_only}/{a_total} episodes unmatched",
+                b_value=f"{b_only}/{b_total} episodes unmatched",
+                message=(f"{a} vs {b}: {gap:.0%} of one arm's episodes were run on tasks the "
+                         f"other never attempted ({', '.join(unshared[:4])}), so the headline "
+                         f"rates average over different problems. the per-task table below "
+                         f"compares only the {len(analysis.strata)} shared task(s)."),
+            ))
+        summaries.append(StratifiedSummary(
+            a=a, b=b,
+            rows=[TaskRow(task=s.task, a_successes=s.a_success, a_n=s.a_n,
+                          b_successes=s.b_success, b_n=s.b_n) for s in analysis.strata],
+            cmh_p=analysis.cmh_p,
+            common_odds_ratio=(analysis.common_odds_ratio
+                               if math.isfinite(analysis.common_odds_ratio) else None),
+            homogeneity_p=analysis.homogeneity_p,
+            homogeneity_testable=analysis.homogeneity_testable,
+            pooled_a_rate=analysis.pooled_a_rate, pooled_b_rate=analysis.pooled_b_rate,
+            simpson_reversal=analysis.simpson_reversal, notes=analysis.notes,
+            a_unmatched=a_only, b_unmatched=b_only,
+        ))
+        if analysis.simpson_reversal:
+            blocks[(a, b)] = Confound(
+                field="task mix", kind="TASK_MIX_CONFOUND",
+                a_value=f"{analysis.pooled_a_rate:.1%} pooled over {len(analysis.strata)} tasks",
+                b_value=f"{analysis.pooled_b_rate:.1%} pooled over {len(analysis.strata)} tasks",
+                message=(
+                    f"{a} vs {b}: no task supports the pooled result. the arms were not "
+                    f"evaluated on the same mix of tasks, so the pooled rates compare task "
+                    f"difficulty, not policies. stratified p={analysis.cmh_p:.4g}. re-run both "
+                    f"policies on the same task list, or read the per-task table above."
+                ),
+            )
+    return summaries, blocks
 
 
 def _decide(*, arms, pairs, baseline, alpha, test, min_lower_bound, noninferiority_margin,
@@ -438,10 +532,28 @@ def _clamp(p: float, eps: float = 0.005) -> tuple[float, bool]:
     return clamped, abs(clamped - p) > 1e-12
 
 
-def posterior_table(arms: list[ArmSummary], baseline: str) -> dict[str, float]:
-    """P(arm > baseline) for each arm - what people think overlapping error bars mean."""
+def posterior_table(arms: list[ArmSummary], baseline: str,
+                    pairs: list[PairTest] | None = None) -> dict[str, float]:
+    """P(arm > baseline) for each arm - what people think overlapping error bars mean.
+
+    Arms whose comparison against the baseline was suppressed are omitted. "P(b > a) = 1.000"
+    is a ranking, and printing one underneath a NOT COMPARABLE verdict hands the reader the
+    exact conclusion the verdict just refused to draw - in the most quotable form on the page.
+    Pass `pairs` (the tests from the same ComparisonResult) so the omission can be worked out;
+    without it every arm is returned, which is correct only when nothing was suppressed.
+    """
     base = next(a for a in arms if a.policy_id == baseline)
+    withheld = suppressed_against(pairs or [], baseline)
     return {
         a.policy_id: prob_a_beats_b(a.successes, a.n, base.successes, base.n)
-        for a in arms if a.policy_id != baseline
+        for a in arms if a.policy_id != baseline and a.policy_id not in withheld
+    }
+
+
+def suppressed_against(pairs: list[PairTest], baseline: str) -> set[str]:
+    """Arms that must not be ranked against `baseline`, by policy id."""
+    return {
+        (p.b if p.a == baseline else p.a)
+        for p in pairs
+        if p.suppressed_reason is not None and baseline in (p.a, p.b)
     }

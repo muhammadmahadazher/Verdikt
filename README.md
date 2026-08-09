@@ -243,6 +243,46 @@ same scene replayed, since different scenes would differ by O(0.1). Rollouts are
 reproducible on GPU, and one episode in fifty diverged badly; that noise is real but does not
 bias McNemar. Full measurement: [docs/pairing_evidence.md](docs/pairing_evidence.md).
 
+## A task suite is not one number
+
+Robotics benchmarks are suites — LIBERO has ten task groups, Meta-World fifty. Add up the
+successes and compare two totals, and a policy can **win the pooled rate while losing every
+single task**. Not a rare pathology: it happens whenever the two arms got different numbers of
+episodes per task, which is what an interrupted or re-run evaluation looks like.
+
+![Simpson's paradox on a two-task suite](docs/simpson.png)
+
+Real shape of the failure — someone gave the new checkpoint more episodes on the easy task:
+
+```
+$ verdikt compare suite.csv --baseline act_v1 --by-task
+
+  task                      act_v1              act_v2    delta
+  pick_bowl          14/20 (70.0%)       55/80 (68.8%)    +1.2%
+  stack_blocks       16/80 (20.0%)        4/20 (20.0%)    +0.0%
+  pooled                     30.0%               59.0%   -29.0%
+
+  stratified (Cochran-Mantel-Haenszel)  p=0.9029  odds ratio 1.034
+  same effect on every task (Breslow-Day) p=0.9434
+
+VERDICT   NOT COMPARABLE
+```
+
+`act_v2` is **not better anywhere**. It ties one task, loses the other by a hair, and "gains"
+29 points on the total. Verdikt suppresses the pair rather than ranking it, the same way it
+handles a compute confound.
+
+| | |
+|---|---|
+| **Runs on every multi-task comparison** | there is no flag to enable it — a check you have to remember is not a check. `--by-task` only controls whether the table prints |
+| **Cochran-Mantel-Haenszel** | combines the per-task comparisons without letting episode counts leak into the answer |
+| **Breslow-Day** | asks whether the effect is even the same across tasks first. If a policy wins some and loses others, no single number describes it, and Verdikt says so instead of averaging the contradiction away |
+| **Coverage gaps** | episodes on tasks the other arm never ran are reported separately — nothing can pair against them |
+
+Both tests are cross-checked against **statsmodels** to 1e-6 across seven configurations
+([docs/crosscheck_stratified.py](docs/crosscheck_stratified.py)); the values statsmodels
+declines to compute are derived by hand in the test that pins them.
+
 ## Gate a merge on evidence, not on a point estimate
 
 ```yaml
@@ -295,7 +335,10 @@ forgotten in a hurry:
   `--noninferiority --margin` exist.
 - 🚫 **The Wald interval is not implemented.** It under-covers at small n and collapses to
   `[0, 0]` at k=0. Asking for it raises an error explaining why.
-- 🚫 **Confounded arms are suppressed, not ranked.**
+- 🚫 **Confounded arms are suppressed, not ranked** — and that includes the Bayesian
+  posterior. `P(b > a) = 1.000` is a ranking, so it is withheld for exactly the pairs the
+  verdict refused to rank.
+- 🚫 **A pooled rate that no task supports is never reported as a win.** See below.
 - 🚫 **Changing the test after seeing data is blocked** when a pre-registered `plan.json` is
   supplied — that's test-shopping, and at the margin it flips verdicts.
 
@@ -482,6 +525,7 @@ Scope discipline is a feature. Verdikt will never:
 | ✅ | `watch` — anytime-valid sequential stopping, past its 20,000-run false-positive gate |
 | ✅ | `gate` — GitHub Action wrapping the four-state exit code, dogfooded in CI |
 | ✅ | W&B write-back |
+| ✅ | multi-task suites — per-task breakdown, Cochran-Mantel-Haenszel, Simpson's-paradox refusal |
 | 🔬 | `profile` — dataset multimodality bound, `--experimental` only, past its calibration gate |
 
 ---

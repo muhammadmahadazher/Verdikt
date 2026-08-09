@@ -74,3 +74,23 @@ jobs:
           baseline: candidate
           fail-on-underpowered: "true"
       - run: test "${{ steps.gate.outcome }}" = "failure"
+
+  task-mix-case:
+    name: a pooled win that no task supports is refused
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - id: gate
+        continue-on-error: true          # NOT_COMPARABLE is a failing exit code
+        uses: ./
+        with:
+          # act_v2 leads the pooled rate by 29 points while tying one task and losing the
+          # other. If this ever comes back BETTER, the paradox guard has stopped working and
+          # the tool is shipping the exact error it exists to prevent.
+          results: "tests/fixtures/multitask_suite/suite.csv"
+          baseline: act_v1
+      - name: the gate must refuse to rank these arms
+        run: |
+          echo "verdict=${{ steps.gate.outputs.verdict }}"
+          test "${{ steps.gate.outputs.verdict }}" = "NOT_COMPARABLE"
+          test "${{ steps.gate.outcome }}" = "failure"
